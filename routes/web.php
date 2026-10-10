@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\GameController;
+use App\Http\Controllers\GameRoomController;
 use Illuminate\Support\Facades\Route;
 
 Route::view('/', 'welcome')->name('home');
@@ -44,4 +45,15 @@ Route::middleware('auth')->group(function () {
     Route::post('/game/{room:code}/ai-step', [GameController::class, 'aiStep'])
         ->middleware('throttle:120,1')
         ->name('game.ai.step');
+
+    // Multiplayer routes
+    Route::prefix('lobby')->name('lobby.')->group(function () {
+        Route::get('/', [GameRoomController::class, 'index'])->name('index');
+        Route::post('/create', [GameRoomController::class, 'create'])->name('create');
+        Route::post('/join/{code}', [GameRoomController::class, 'join'])->name('join');
+        Route::get('/{room:code}', [GameRoomController::class, 'show'])->name('show');
+        Route::post('/{room:code}/ready', [GameRoomController::class, 'toggleReady'])->name('ready');
+        Route::post('/{room:code}/start', [GameRoomController::class, 'start'])->name('start');
+        Route::post('/{room:code}/leave', [GameRoomController::class, 'leave'])->name('leave');
+    });
 });

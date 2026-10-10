@@ -23,6 +23,7 @@
         .bar { display:flex; justify-content:space-between; align-items:center; }
         .bar span { color:#fff; }
         [hidden] { display:none !important; }
+        .btn-multiplayer { background:#28a745; color:#fff; }
     </style>
 </head>
 <body>
@@ -32,6 +33,15 @@
         <form method="POST" action="{{ route('logout') }}">@csrf<button class="logout" type="submit">Keluar</button></form>
     </div>
     <h1>Monopoly Web Game</h1>
+
+    <!-- TAMBAHAN: Link ke Multiplayer Lobby -->
+    <div class="card">
+        <h2>🌐 Multiplayer Online</h2>
+        <p>Main bersama teman secara online dengan kode room!</p>
+        <a href="{{ route('lobby.index') }}" style="display:block;margin-top:10px;">
+            <button class="primary btn-multiplayer" type="button">Masuk Lobby Multiplayer</button>
+        </a>
+    </div>
 
     <div class="card">
         <h2>Lawan komputer (1–3 lawan)</h2>
@@ -84,7 +94,7 @@
             @endforeach
             <button class="primary" type="submit">Mulai permainan</button>
         </form>
-        <p class="note">Semua pemain bergantian di perangkat ini. Mode online tersedia di tahap berikutnya.</p>
+        <p class="note">Semua pemain bergantian di perangkat ini. Untuk main online, gunakan mode Multiplayer.</p>
     </div>
 
     @if ($rooms->isNotEmpty())
@@ -108,7 +118,7 @@
         fields.forEach(function (f) {
             var on = parseInt(f.getAttribute('data-idx'), 10) < n;
             f.hidden = !on;
-            f.querySelector('input').disabled = !on; // input nonaktif tidak ikut terkirim
+            f.querySelector('input').disabled = !on;
         });
     }
     select.addEventListener('change', sync);
