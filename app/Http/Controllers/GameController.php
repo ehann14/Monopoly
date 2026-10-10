@@ -26,7 +26,6 @@ class GameController extends Controller
 
     public function store(Request $request, GameEngine $engine): RedirectResponse
     {
-        // Buang kolom nama yang dikosongkan sebelum validasi.
         $names = array_values(array_filter(
             array_map(fn ($v) => is_string($v) ? trim($v) : '', (array) $request->input('players', [])),
             fn ($v) => $v !== ''
@@ -119,7 +118,6 @@ class GameController extends Controller
         $version = $request->input('expected_version');
         $version = is_numeric($version) ? (int) $version : null;
 
-        // Hanya tile_id yang diteruskan ke engine; nilainya divalidasi ulang di sana.
         $tile = $request->input('tile_id');
         $params = ['tile_id' => is_numeric($tile) ? (int) $tile : null];
 
@@ -129,10 +127,12 @@ class GameController extends Controller
             return response()->json(['message' => $e->getMessage()], 422);
         }
 
+        // Broadcast state setelah aksi berhasil
+        $state->broadcastState($room);
+
         return response()->json($state->snapshot($room, $request->user()));
     }
 
-    /** Menjalankan satu langkah giliran komputer. Boleh dipicu anggota room mana pun. */
     public function aiStep(Request $request, GameRoom $room, GameEngine $engine, GameStateService $state): JsonResponse
     {
         Gate::authorize('view', $room);
@@ -145,6 +145,9 @@ class GameController extends Controller
         } catch (GameRuleException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         }
+
+        // Broadcast state setelah AI bergerak
+        $state->broadcastState($room);
 
         return response()->json($state->snapshot($room, $request->user()));
     }

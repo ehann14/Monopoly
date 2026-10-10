@@ -2,8 +2,13 @@
 
 namespace App\Http\Controllers;
 
+use App\Events\GamePlayerJoined;
+use App\Events\GamePlayerLeft;
+use App\Events\GamePlayerReady;
+use App\Events\GameStarted;
 use App\Models\GamePlayer;
 use App\Models\GameRoom;
+use App\Services\GameEngine;
 use App\Services\GameStateService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -14,9 +19,6 @@ use Illuminate\View\View;
 
 class GameRoomController extends Controller
 {
-    /**
-     * Halaman lobby multiplayer - daftar room yang tersedia
-     */
     public function index(Request $request): View
     {
         $rooms = GameRoom::where('status', 'waiting')
@@ -36,9 +38,6 @@ class GameRoomController extends Controller
         ]);
     }
 
-    /**
-     * Buat room multiplayer baru
-     */
     public function create(Request $request): RedirectResponse
     {
         $data = $request->validate([
@@ -60,8 +59,7 @@ class GameRoomController extends Controller
             'state_version' => 0,
         ]);
 
-        // Host otomatis bergabung sebagai pemain pertama
-        GamePlayer::create([
+        $player = GamePlayer::create([
             'game_room_id' => $room->id,
             'user_id' => $request->user()->id,
             'name' => mb_substr($request->user()->name, 0, 40),
@@ -73,17 +71,16 @@ class GameRoomController extends Controller
             'money' => (int) config('monopoly.rules.starting_money'),
         ]);
 
+        // Broadcast player joined
+        event(new GamePlayerJoined($room, $player));
+
         return redirect()->route('lobby.show', $room->code);
     }
 
-    /**
-     * Gabung ke room menggunakan kode
-     */
     public function join(Request $request, string $code): RedirectResponse
     {
         $room = GameRoom::where('code', $code)->firstOrFail();
 
-        // Validasi room
         if ($room->status !== 'waiting') {
             throw ValidationException::withMessages([
                 'code' => 'Room sudah dimulai atau tidak aktif.',
@@ -96,13 +93,11 @@ class GameRoomController extends Controller
             ]);
         }
 
-        // Cek apakah user sudah ada di room ini
         $existingPlayer = GamePlayer::where('game_room_id', $room->id)
             ->where('user_id', $request->user()->id)
             ->first();
 
         if ($existingPlayer) {
-            // Reconnect: update status koneksi
             $existingPlayer->update([
                 'is_connected' => true,
                 'last_seen_at' => now(),
@@ -110,19 +105,15 @@ class GameRoomController extends Controller
                 'reconnected_at' => now(),
             ]);
 
+            event(new GamePlayerJoined($room, $existingPlayer));
+
             return redirect()->route('lobby.show', $room->code);
         }
 
-        // Cek apakah user sudah jadi AI di room lain dengan kode sama (cegah duplikat)
-        $duplicateCheck = GamePlayer::where('game_room_id', $room->id)
-            ->whereNull('user_id')
-            ->exists();
-
-        // Buat pemain baru
         $nextSeat = $room->players()->max('seat') + 1;
         $tokens = config('monopoly.tokens');
 
-        GamePlayer::create([
+        $player = GamePlayer::create([
             'game_room_id' => $room->id,
             'user_id' => $request->user()->id,
             'name' => mb_substr($request->user()->name, 0, 40),
@@ -134,12 +125,12 @@ class GameRoomController extends Controller
             'money' => (int) config('monopoly.rules.starting_money'),
         ]);
 
+        // Broadcast player joined
+        event(new GamePlayerJoined($room, $player));
+
         return redirect()->route('lobby.show', $room->code);
     }
 
-    /**
-     * Tampilkan detail lobby room
-     */
     public function show(Request $request, GameRoom $room): View
     {
         Gate::authorize('view', $room);
@@ -159,9 +150,6 @@ class GameRoomController extends Controller
         ]);
     }
 
-    /**
-     * Toggle ready status pemain
-     */
     public function toggleReady(Request $request, GameRoom $room): JsonResponse
     {
         Gate::authorize('view', $room);
@@ -173,6 +161,9 @@ class GameRoomController extends Controller
         $player->is_ready = !$player->is_ready;
         $player->save();
 
+        // Broadcast ready status change
+        event(new GamePlayerReady($room, $player));
+
         return response()->json([
             'success' => true,
             'is_ready' => $player->is_ready,
@@ -180,14 +171,10 @@ class GameRoomController extends Controller
         ]);
     }
 
-    /**
-     * Mulai permainan (hanya host)
-     */
-    public function start(Request $request, GameRoom $room): RedirectResponse
+    public function start(Request $request, GameRoom $room, GameEngine $engine): RedirectResponse
     {
         Gate::authorize('view', $room);
 
-        // Hanya host yang bisa mulai
         if ((int) $room->host_user_id !== (int) $request->user()->id) {
             abort(403, 'Hanya host yang dapat memulai permainan.');
         }
@@ -198,45 +185,15 @@ class GameRoomController extends Controller
             ]);
         }
 
-        // Inisialisasi properti dan kartu
-        \App\Models\PropertyOwnership::where('game_room_id', $room->id)->delete();
-        \App\Models\GameCardDeck::where('game_room_id', $room->id)->delete();
+        // Inisialisasi game melalui engine
+        $engine->initializeMultiplayerGame($room);
 
-        $boardService = app(\App\Services\BoardService::class);
-        foreach ($boardService->tiles() as $tile) {
-            if ($boardService->isBuyable($tile)) {
-                \App\Models\PropertyOwnership::create([
-                    'game_room_id' => $room->id,
-                    'tile_id' => $tile['id'],
-                ]);
-            }
-        }
-
-        $cardService = app(\App\Services\CardService::class);
-        $cardService->ensureDecks($room);
-
-        // Update status room
-        $room->status = 'playing';
-        $room->started_at = now();
-        $room->state_version = 1;
-
-        // Set pemain pertama (seat 0)
-        $firstPlayer = $room->players()->orderBy('seat')->first();
-        $room->current_player_id = $firstPlayer->id;
-        $room->turn_phase = 'await_roll';
-        $room->turn_number = 0;
-        $room->save();
-
-        // Log awal permainan
-        $stateService = app(\App\Services\GameStateService::class);
-        $stateService->log($room, 'system', "Permainan dimulai! {$firstPlayer->name} jalan pertama.");
+        // Broadcast game started
+        event(new GameStarted($room));
 
         return redirect()->route('game.show', $room->code);
     }
 
-    /**
-     * Keluar dari room (sebelum permainan dimulai)
-     */
     public function leave(Request $request, GameRoom $room): RedirectResponse
     {
         Gate::authorize('view', $room);
@@ -249,7 +206,9 @@ class GameRoomController extends Controller
             ->where('user_id', $request->user()->id)
             ->firstOrFail();
 
-        // Jika host keluar, transfer host atau hapus room
+        // Broadcast sebelum hapus
+        event(new GamePlayerLeft($room, $player));
+
         if ((int) $room->host_user_id === (int) $request->user()->id) {
             $otherPlayers = $room->players()
                 ->where('id', '!=', $player->id)
@@ -257,11 +216,9 @@ class GameRoomController extends Controller
                 ->first();
 
             if ($otherPlayers) {
-                // Transfer host ke pemain berikutnya
                 $room->host_user_id = $otherPlayers->user_id;
                 $room->save();
             } else {
-                // Tidak ada pemain lain, hapus room
                 $room->delete();
                 return redirect()->route('lobby.index');
             }
@@ -272,9 +229,6 @@ class GameRoomController extends Controller
         return redirect()->route('lobby.index');
     }
 
-    /**
-     * Cek apakah room bisa dimulai
-     */
     private function canStartGame(GameRoom $room, $user): bool
     {
         if ((int) $room->host_user_id !== (int) $user->id) {

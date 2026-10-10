@@ -380,6 +380,7 @@
     let expectedVersion = state.version;
     let myUserId = {{ auth()->id() }};
     let isLocalMode = state.room.mode === 'local';
+    const roomCode = state.room.code;
 
     // --- DOM Elements ---
     const boardEl = document.getElementById('board');
@@ -387,7 +388,7 @@
     const logEl = document.getElementById('game-log');
     const centerMsg = document.getElementById('center-message');
     const diceDisplay = document.getElementById('dice-display');
-    
+
     // Buttons
     const btnRoll = document.getElementById('btn-roll');
     const btnBuy = document.getElementById('btn-buy');
@@ -399,7 +400,7 @@
     function init() {
         renderBoard();
         updateUI();
-        startPolling();
+        connectWebSocket();
         
         // Event Listeners
         btnRoll.addEventListener('click', () => sendAction('roll'));
@@ -408,9 +409,50 @@
         btnEnd.addEventListener('click', () => sendAction('end_turn'));
     }
 
+    // --- WebSocket Connection via Laravel Echo ---
+    function connectWebSocket() {
+        if (typeof window.Echo === 'undefined') {
+            console.warn('Laravel Echo not loaded. Falling back to polling.');
+            startPolling();
+            return;
+        }
+
+        window.Echo.private(`game.${roomCode}`)
+            .listen('GameStateChanged', (e) => {
+                if (e.version > expectedVersion) {
+                    state = e.snapshot;
+                    expectedVersion = e.version;
+                    updateUI();
+                }
+            })
+            .error((error) => {
+                console.error('WebSocket error:', error);
+                // Fallback ke polling jika WS gagal
+                startPolling();
+            });
+
+        console.log(`🔌 Connected to game.${roomCode} via Reverb`);
+    }
+
+    // --- Fallback Polling (jika WS gagal) ---
+    let pollingInterval = null;
+    function startPolling() {
+        if (pollingInterval) return; // Sudah jalan
+        pollingInterval = setInterval(async () => {
+            try {
+                const res = await fetch(config.urls.state);
+                const data = await res.json();
+                if (data.version > expectedVersion) {
+                    state = data;
+                    expectedVersion = data.version;
+                    updateUI();
+                }
+            } catch (e) {}
+        }, 2000);
+    }
+
     // --- Rendering Board ---
     function renderBoard() {
-        // Clear existing tiles except center
         const center = boardEl.querySelector('.board-center');
         boardEl.innerHTML = '';
         boardEl.appendChild(center);
@@ -420,22 +462,20 @@
             el.className = `tile ${tile.type === 'corner' ? 'corner' : ''}`;
             el.id = `tile-${tile.id}`;
             
-            // Grid Positioning Logic for Monopoly Board (0-39)
             let row, col;
-            if (tile.id >= 0 && tile.id <= 10) { // Bottom Row (Right to Left)
+            if (tile.id >= 0 && tile.id <= 10) {
                 row = 11; col = 11 - tile.id;
-            } else if (tile.id >= 11 && tile.id <= 20) { // Left Column (Bottom to Top)
+            } else if (tile.id >= 11 && tile.id <= 20) {
                 row = 11 - (tile.id - 10); col = 1;
-            } else if (tile.id >= 21 && tile.id <= 30) { // Top Row (Left to Right)
+            } else if (tile.id >= 21 && tile.id <= 30) {
                 row = 1; col = tile.id - 20;
-            } else { // Right Column (Top to Bottom)
+            } else {
                 row = tile.id - 30; col = 11;
             }
             
             el.style.gridRow = row;
             el.style.gridColumn = col;
 
-            // Content
             if (tile.color) {
                 el.innerHTML += `<div class="tile-header" style="background:${tile.color};"></div>`;
             }
@@ -460,7 +500,6 @@
             const card = document.createElement('div');
             card.className = `player-card ${p.id === state.current_player_id ? 'active' : ''} ${p.is_bankrupt ? 'bankrupt' : ''}`;
             
-            // Count assets
             const props = state.properties.filter(prop => prop.owner_player_id === p.id);
             const houses = props.reduce((sum, prop) => sum + prop.houses, 0);
             const hotels = props.filter(prop => prop.has_hotel).length;
@@ -475,6 +514,7 @@
                     ${houses > 0 ? `<span class="asset-badge">🏡 ${houses}</span>` : ''}
                     ${hotels > 0 ? `<span class="asset-badge">🏨 ${hotels}</span>` : ''}
                     ${p.in_jail ? '<span class="asset-badge" style="background:#ffebee; color:#c62828;">⛓️ Penjara</span>' : ''}
+                    ${!p.is_connected && !p.is_ai ? '<span class="asset-badge" style="background:#fff3cd; color:#856404;">⚠️ Offline</span>' : ''}
                 </div>
             `;
             playerListEl.appendChild(card);
@@ -491,7 +531,6 @@
                 token.style.background = p.token || '#333';
                 token.innerText = p.name.charAt(0);
                 
-                // Offset multiple tokens on same tile
                 const countOnTile = state.players.filter(pl => pl.position === p.position && !pl.is_bankrupt).length;
                 const index = state.players.findIndex(pl => pl.id === p.id);
                 const offset = (index % countOnTile) * 5;
@@ -501,12 +540,11 @@
             }
         });
 
-        // 3. Update Properties (Colors/Houses)
+        // 3. Update Properties
         state.properties.forEach(prop => {
             const tileEl = document.getElementById(`tile-${prop.tile_id}`);
             if (!tileEl) return;
             
-            // Remove old markers
             tileEl.querySelectorAll('.prop-marker').forEach(m => m.remove());
 
             if (prop.owner_player_id) {
@@ -514,23 +552,17 @@
                 if (owner) {
                     tileEl.style.boxShadow = `inset 0 0 0 2px ${owner.token}`;
                     
-                    // Houses/Hotels
                     if (prop.has_hotel) {
                         const hotel = document.createElement('div');
                         hotel.className = 'prop-marker';
                         hotel.innerText = '🏨';
-                        hotel.style.position = 'absolute';
-                        hotel.style.top = '2px';
-                        hotel.style.right = '2px';
+                        hotel.style.cssText = 'position:absolute;top:2px;right:2px;';
                         tileEl.appendChild(hotel);
                     } else if (prop.houses > 0) {
                         const houses = document.createElement('div');
                         houses.className = 'prop-marker';
                         houses.innerText = '🏡'.repeat(prop.houses);
-                        houses.style.position = 'absolute';
-                        houses.style.top = '2px';
-                        houses.style.right = '2px';
-                        houses.style.fontSize = '0.6rem';
+                        houses.style.cssText = 'position:absolute;top:2px;right:2px;font-size:0.6rem;';
                         tileEl.appendChild(houses);
                     }
                     
@@ -538,11 +570,7 @@
                         const mark = document.createElement('div');
                         mark.className = 'prop-marker';
                         mark.innerText = 'M';
-                        mark.style.position = 'absolute';
-                        mark.style.bottom = '2px';
-                        mark.style.left = '2px';
-                        mark.style.color = 'red';
-                        mark.style.fontWeight = 'bold';
+                        mark.style.cssText = 'position:absolute;bottom:2px;left:2px;color:red;font-weight:bold;';
                         tileEl.appendChild(mark);
                     }
                 }
@@ -563,15 +591,15 @@
         if (state.turn_phase === 'await_roll' && isMyTurn && !currentPlayerObj.in_jail) {
             btnRoll.style.display = 'inline-block';
             btnRoll.disabled = false;
+            btnRoll.innerText = 'Melempar Dadu';
         } else if (state.turn_phase === 'await_buy' && isMyTurn) {
             btnBuy.style.display = 'inline-block';
             btnDecline.style.display = 'inline-block';
             document.getElementById('buy-price').innerText = state.pending.price;
         } else if (state.turn_phase === 'await_end' && isMyTurn) {
             btnEnd.style.display = 'inline-block';
-            // Show build button if owns complete set (simplified check)
             btnBuild.style.display = 'inline-block'; 
-        } else if (currentPlayerObj.in_jail && isMyTurn) {
+        } else if (currentPlayerObj && currentPlayerObj.in_jail && isMyTurn) {
              btnRoll.style.display = 'inline-block';
              btnRoll.innerText = "Coba Keluar Penjara";
         }
@@ -613,9 +641,12 @@
             
             const data = await response.json();
             if (response.ok) {
-                state = data;
-                expectedVersion = data.version;
-                updateUI();
+                // State akan diupdate via WebSocket, tapi kita update juga di sini sebagai fallback
+                if (data.version > expectedVersion) {
+                    state = data;
+                    expectedVersion = data.version;
+                    updateUI();
+                }
             } else {
                 showModal('Error', data.message || 'Terjadi kesalahan.');
                 btn.disabled = false;
@@ -627,21 +658,6 @@
             btn.disabled = false;
             btn.innerText = originalText;
         }
-    }
-
-    // --- Polling ---
-    function startPolling() {
-        setInterval(async () => {
-            try {
-                const res = await fetch(config.urls.state);
-                const data = await res.json();
-                if (data.version > expectedVersion) {
-                    state = data;
-                    expectedVersion = data.version;
-                    updateUI();
-                }
-            } catch (e) {}
-        }, 2000);
     }
 
     // --- Modal Helper ---
@@ -656,6 +672,13 @@
             if (onConfirm) onConfirm();
         };
     }
+
+    // Cleanup on page unload
+    window.addEventListener('beforeunload', () => {
+        if (typeof window.Echo !== 'undefined') {
+            window.Echo.leaveChannel(`game.${roomCode}`);
+        }
+    });
 
     // Start
     init();

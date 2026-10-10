@@ -10,16 +10,14 @@ Broadcast::channel('App.Models.User.{id}', function ($user, $id) {
 
 /**
  * Presence channel untuk lobby game
- * Semua anggota room bisa join
  */
 Broadcast::channel('game.{code}', function ($user, $code) {
     $room = GameRoom::where('code', $code)->first();
-    
+
     if (!$room) {
         return false;
     }
 
-    // Izinkan jika user adalah member room
     if ($room->hasMember($user)) {
         $player = GamePlayer::where('game_room_id', $room->id)
             ->where('user_id', $user->id)
@@ -33,22 +31,15 @@ Broadcast::channel('game.{code}', function ($user, $code) {
         ] : false;
     }
 
-    // Izinkan guest untuk melihat lobby (tapi data terbatas)
-    return [
-        'id' => null,
-        'name' => 'Guest',
-        'seat' => null,
-        'token' => null,
-    ];
+    return false;
 });
 
 /**
- * Private channel untuk update state game
- * Hanya member room yang bisa subscribe
+ * Private channel untuk update state game real-time
  */
-Broadcast::channel('game.{code}.state', function ($user, $code) {
+Broadcast::channel('game.{code}', function ($user, $code) {
     $room = GameRoom::where('code', $code)->first();
-    
+
     if (!$room) {
         return false;
     }
