@@ -10,6 +10,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
 class GameController extends Controller
@@ -45,6 +46,41 @@ class GameController extends Controller
         return redirect()->route('game.show', $room->code);
     }
 
+    public function storeAi(Request $request, GameEngine $engine): RedirectResponse
+    {
+        $names = array_values(array_filter(
+            array_map(fn ($v) => is_string($v) ? trim($v) : '', (array) $request->input('ai_names', [])),
+            fn ($v) => $v !== ''
+        ));
+        $request->merge(['ai_names' => $names]);
+
+        $data = $request->validate([
+            'difficulty' => ['required', 'in:easy,hard'],
+            'ai_names' => ['required', 'array', 'min:1', 'max:3'],
+            'ai_names.*' => ['required', 'string', 'min:1', 'max:20', 'distinct:ignore_case'],
+        ], [
+            'difficulty.required' => 'Pilih tingkat kesulitan.',
+            'difficulty.in' => 'Tingkat kesulitan tidak valid.',
+            'ai_names.required' => 'Isi minimal satu nama komputer.',
+            'ai_names.min' => 'Isi minimal satu nama komputer.',
+            'ai_names.max' => 'Maksimal 3 lawan komputer.',
+            'ai_names.*.distinct' => 'Nama komputer tidak boleh sama.',
+        ]);
+
+        $human = mb_strtolower(mb_substr($request->user()->name, 0, 40));
+        foreach ($data['ai_names'] as $name) {
+            if (mb_strtolower($name) === $human) {
+                throw ValidationException::withMessages([
+                    'ai_names' => 'Nama komputer tidak boleh sama dengan nama Anda.',
+                ]);
+            }
+        }
+
+        $room = $engine->createAiGame($request->user(), $data['ai_names'], $data['difficulty']);
+
+        return redirect()->route('game.show', $room->code);
+    }
+
     public function show(Request $request, GameRoom $room, GameStateService $state): View
     {
         Gate::authorize('view', $room);
@@ -60,6 +96,7 @@ class GameController extends Controller
                 'urls' => [
                     'state' => route('game.state', $room->code),
                     'action' => route('game.action', [$room->code, '__ACTION__']),
+                    'aiStep' => route('game.ai.step', $room->code),
                     'menu' => route('menu'),
                 ],
             ],
@@ -88,6 +125,23 @@ class GameController extends Controller
 
         try {
             $engine->perform($request->user(), $room, $action, $key, $version, $params);
+        } catch (GameRuleException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json($state->snapshot($room, $request->user()));
+    }
+
+    /** Menjalankan satu langkah giliran komputer. Boleh dipicu anggota room mana pun. */
+    public function aiStep(Request $request, GameRoom $room, GameEngine $engine, GameStateService $state): JsonResponse
+    {
+        Gate::authorize('view', $room);
+
+        $version = $request->input('expected_version');
+        $version = is_numeric($version) ? (int) $version : null;
+
+        try {
+            $engine->aiStep($room, $version);
         } catch (GameRuleException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         }

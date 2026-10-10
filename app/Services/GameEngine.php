@@ -11,7 +11,7 @@ use App\Models\User;
 use Illuminate\Support\Facades\DB;
 
 /**
- * Orkestrator aturan. Semua aksi pemain lewat perform(): satu transaksi DB,
+ * Orkestrator aturan. Semua aksi pemain (dan AI) lewat applyAction(): satu transaksi DB,
  * room dikunci, idempotensi, dan pengecekan versi.
  *
  * Fase giliran: await_roll | await_buy | await_debt | await_end
@@ -32,8 +32,11 @@ class GameEngine
         private MortgageService $mortgage,
         private JailService $jail,
         private CardService $cards,
+        private AIPlayerService $ai,
     ) {
     }
+
+    // ------------------------------------------------------------------ membuat game
 
     /** Game lokal (hot-seat): 2-4 pemain di satu perangkat, dikendalikan host. */
     public function createLocalGame(User $host, array $names): GameRoom
@@ -44,7 +47,37 @@ class GameEngine
             throw new GameRuleException("Jumlah pemain harus 2 sampai $max.");
         }
 
-        return DB::transaction(function () use ($host, $names) {
+        $seats = [];
+        foreach ($names as $seat => $name) {
+            $seats[] = ['name' => $name, 'is_ai' => false, 'user_id' => $seat === 0 ? $host->id : null];
+        }
+
+        return $this->createGame($host, 'local', $seats, null);
+    }
+
+    /** Game melawan komputer: 1 pemain manusia (seat 0) + 1-3 AI. */
+    public function createAiGame(User $host, array $aiNames, string $difficulty): GameRoom
+    {
+        $aiNames = array_values($aiNames);
+        $max = (int) config('monopoly.rules.max_players');
+        if (count($aiNames) < 1 || count($aiNames) > $max - 1) {
+            throw new GameRuleException('Jumlah lawan komputer harus 1 sampai ' . ($max - 1) . '.');
+        }
+        if (! in_array($difficulty, ['easy', 'hard'], true)) {
+            throw new GameRuleException('Tingkat kesulitan tidak valid.');
+        }
+
+        $seats = [['name' => mb_substr($host->name, 0, 40), 'is_ai' => false, 'user_id' => $host->id]];
+        foreach ($aiNames as $name) {
+            $seats[] = ['name' => mb_substr($name, 0, 40), 'is_ai' => true, 'user_id' => null];
+        }
+
+        return $this->createGame($host, 'ai', $seats, $difficulty);
+    }
+
+    private function createGame(User $host, string $mode, array $seats, ?string $difficulty): GameRoom
+    {
+        return DB::transaction(function () use ($host, $mode, $seats, $difficulty) {
             $rules = config('monopoly.rules');
             $tokens = config('monopoly.tokens');
 
@@ -52,8 +85,9 @@ class GameEngine
             $room->forceFill([
                 'code' => GameRoom::generateCode(),
                 'host_user_id' => $host->id,
-                'mode' => 'local',
+                'mode' => $mode,
                 'status' => 'playing',
+                'ai_difficulty' => $difficulty,
                 'rules' => $rules,
                 'turn_phase' => 'await_roll',
                 'turn_number' => 0,
@@ -63,12 +97,13 @@ class GameEngine
             $room->save();
 
             $created = [];
-            foreach ($names as $seat => $name) {
+            foreach ($seats as $seat => $s) {
                 $created[] = GamePlayer::create([
                     'game_room_id' => $room->id,
-                    'user_id' => $seat === 0 ? $host->id : null,
-                    'name' => $name,
-                    'is_ai' => false,
+                    'user_id' => $s['user_id'],
+                    'name' => $s['name'],
+                    'is_ai' => $s['is_ai'],
+                    'ai_difficulty' => $s['is_ai'] ? $difficulty : null,
                     'seat' => $seat,
                     'token' => $tokens[$seat],
                     'is_ready' => true,
@@ -92,6 +127,8 @@ class GameEngine
             return $room;
         });
     }
+
+    // ------------------------------------------------------------------ pintu masuk aksi
 
     public function perform(
         User $user,
@@ -127,21 +164,7 @@ class GameEngine
                 throw new GameRuleException('Bukan giliran Anda.');
             }
 
-            match ($action) {
-                'roll' => $this->roll($room, $actor),
-                'buy' => $this->buy($room, $actor),
-                'decline' => $this->decline($room, $actor),
-                'end_turn' => $this->endTurn($room, $actor),
-                'build' => $this->build($room, $actor, $this->tileParam($params)),
-                'sell_building' => $this->sellBuilding($room, $actor, $this->tileParam($params)),
-                'mortgage' => $this->mortgageTile($room, $actor, $this->tileParam($params)),
-                'unmortgage' => $this->unmortgageTile($room, $actor, $this->tileParam($params)),
-                'pay_jail' => $this->payJail($room, $actor),
-                'use_jail_card' => $this->useJailCard($room, $actor),
-                'pay_debt' => $this->payDebt($room, $actor),
-                'declare_bankruptcy' => $this->declareBankruptcy($room, $actor),
-                default => throw new GameRuleException('Aksi tidak dikenal.'),
-            };
+            $this->applyAction($room, $actor, $action, $params);
 
             $room->state_version = $room->state_version + 1;
             $room->save();
@@ -155,6 +178,63 @@ class GameEngine
                 ]);
             }
         }, 3);
+    }
+
+    /**
+     * Menjalankan SATU aksi pemain AI yang sedang giliran. Keputusan datang dari AIPlayerService,
+     * eksekusinya lewat applyAction() yang sama dengan pemain manusia (aturan yang sama).
+     * Bila keputusan AI ditolak aturan, perubahannya dibatalkan dan aksi aman dijalankan.
+     */
+    public function aiStep(GameRoom $room, ?int $expectedVersion = null): void
+    {
+        DB::transaction(function () use ($room, $expectedVersion) {
+            $room = GameRoom::whereKey($room->id)->lockForUpdate()->firstOrFail();
+
+            if ($expectedVersion !== null && $expectedVersion !== (int) $room->state_version) {
+                throw new GameRuleException('Status permainan sudah berubah. Tampilan dimuat ulang.');
+            }
+            if ($room->status !== 'playing') {
+                throw new GameRuleException('Permainan tidak sedang berlangsung.');
+            }
+
+            $actor = GamePlayer::where('game_room_id', $room->id)
+                ->whereKey($room->current_player_id)->lockForUpdate()->first();
+            if ($actor === null || ! $actor->is_ai || $actor->is_bankrupt) {
+                throw new GameRuleException('Bukan giliran komputer.');
+            }
+
+            $choice = $this->ai->decide($room, $actor);
+
+            try {
+                DB::transaction(fn () => $this->applyAction($room, $actor, $choice['action'], $choice['params']));
+            } catch (GameRuleException $e) {
+                $room->refresh();
+                $actor->refresh();
+                $this->applyAction($room, $actor, $this->ai->fallback($room, $actor), []);
+            }
+
+            $room->state_version = $room->state_version + 1;
+            $room->save();
+        }, 3);
+    }
+
+    private function applyAction(GameRoom $room, GamePlayer $actor, string $action, array $params): void
+    {
+        match ($action) {
+            'roll' => $this->roll($room, $actor),
+            'buy' => $this->buy($room, $actor),
+            'decline' => $this->decline($room, $actor),
+            'end_turn' => $this->endTurn($room, $actor),
+            'build' => $this->build($room, $actor, $this->tileParam($params)),
+            'sell_building' => $this->sellBuilding($room, $actor, $this->tileParam($params)),
+            'mortgage' => $this->mortgageTile($room, $actor, $this->tileParam($params)),
+            'unmortgage' => $this->unmortgageTile($room, $actor, $this->tileParam($params)),
+            'pay_jail' => $this->payJail($room, $actor),
+            'use_jail_card' => $this->useJailCard($room, $actor),
+            'pay_debt' => $this->payDebt($room, $actor),
+            'declare_bankruptcy' => $this->declareBankruptcy($room, $actor),
+            default => throw new GameRuleException('Aksi tidak dikenal.'),
+        };
     }
 
     // ------------------------------------------------------------------ util

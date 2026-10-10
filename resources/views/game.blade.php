@@ -48,6 +48,7 @@ body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;b
 .pcard{border:2px solid #eee;border-radius:10px;padding:8px;margin-bottom:8px}
 .pcard.current{border-color:var(--accent);background:#fffbe6}.pcard.bankrupt{opacity:.5}
 .phead{display:flex;align-items:center;gap:8px}.pmoney{margin-left:auto;font-weight:700}
+.aitag{font-size:11px;background:#e3f2fd;color:#0d47a1;border-radius:8px;padding:1px 6px}
 .pstat{font-size:12px;color:#b71c1c;margin-top:4px}
 .chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
 .chip{font-size:11px;padding:2px 6px;border-radius:8px;background:#ddd;border-left:6px solid #999}
@@ -115,7 +116,8 @@ details.panel p{font-size:13px;margin:6px 0}
             <p>Penjara: masuk lewat petak Masuk Penjara, dadu kembar ke-3, atau kartu. Keluar dengan membayar denda, kartu bebas penjara, atau dadu kembar. Gagal 3 kali: wajib bayar denda lalu bergerak.</p>
             <p>Kartu Kesempatan dan Dana Umum dijalankan otomatis saat mendarat di petaknya.</p>
             <p>Utang: jika uang kurang tapi aset cukup, jual bangunan atau gadaikan properti lalu bayar. Jika semua aset tidak cukup, pemain bangkrut. Pemain terakhir yang tersisa menang.</p>
-            <p>Belum aktif: AI (Tahap 4), online (Tahap 5), Game Master (Tahap 6).</p>
+            <p>Lawan komputer (AI) bermain otomatis dengan aturan yang sama. Jangan tutup halaman saat giliran komputer, karena langkahnya dijalankan dari halaman ini.</p>
+            <p>Belum aktif: online (Tahap 5), Game Master (Tahap 6).</p>
         </details>
     </aside>
 </main>
@@ -135,11 +137,13 @@ const ACTION_BUTTONS = {
     roll: 'btnRoll', pay_jail: 'btnPayJail', use_jail_card: 'btnJailCard', buy: 'btnBuy', decline: 'btnDecline',
     pay_debt: 'btnPayDebt', declare_bankruptcy: 'btnBankrupt', end_turn: 'btnEnd'
 };
+const AI_DELAY_MS = 900;
 
 let state = DATA.snapshot;
 let busy = false;
 let selectedTile = null;
 let lastDiceKey = null;
+let aiTimer = null;
 const tileEls = [];
 
 const $ = (id) => document.getElementById(id);
@@ -275,6 +279,8 @@ function renderActions() {
     let hint = '';
     if (state.room.status === 'finished') {
         hint = 'Permainan selesai.';
+    } else if (state.ai_turn && cur) {
+        hint = cur.name + ' (komputer) sedang bermain...';
     } else if (!state.can_act) {
         hint = cur ? 'Menunggu giliran ' + cur.name + '.' : '';
     } else if (state.phase === 'await_roll') {
@@ -381,6 +387,7 @@ function renderPlayers() {
         dot.style.background = COLORS[p.token] || '#999';
         head.appendChild(dot);
         head.appendChild(el('strong', null, p.name));
+        if (p.is_ai) head.appendChild(el('span', 'aitag', 'AI ' + (p.ai_difficulty === 'hard' ? 'Hard' : 'Easy')));
         head.appendChild(el('span', 'pmoney', p.is_bankrupt ? 'Bangkrut' : money(p.money)));
         card.appendChild(head);
 
@@ -470,6 +477,7 @@ function render() {
     renderDetail();
     renderSelection();
     renderLog();
+    scheduleAi();
 }
 
 function apply(next) {
@@ -542,6 +550,49 @@ async function act(action, params) {
         busy = false;
         renderActions();
         renderManage();
+        scheduleAi();
+    }
+}
+
+// Giliran komputer: satu langkah AI per panggilan, dengan jeda agar gerakannya terlihat.
+function scheduleAi() {
+    if (aiTimer !== null || busy) return;
+    if (!state.ai_turn || state.room.status !== 'playing') return;
+    aiTimer = setTimeout(() => { aiTimer = null; aiStep(); }, AI_DELAY_MS);
+}
+
+async function aiStep() {
+    if (busy || !state.ai_turn) return;
+    busy = true;
+    renderActions();
+    renderManage();
+    try {
+        const r = await fetch(DATA.urls.aiStep, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+                'X-CSRF-TOKEN': CSRF,
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({expected_version: state.version}),
+        });
+        let body = {};
+        try { body = await r.json(); } catch (e) { body = {}; }
+        if (r.ok) {
+            apply(body);
+            setConn(true);
+        } else {
+            if (r.status === 419) toast('Sesi berakhir. Muat ulang halaman.');
+            await refresh(); // 422 (mis. versi usang karena tab lain ikut menjalankan AI): sinkron ulang saja
+        }
+    } catch (e) {
+        setConn(false);
+    } finally {
+        busy = false;
+        renderActions();
+        renderManage();
+        scheduleAi();
     }
 }
 

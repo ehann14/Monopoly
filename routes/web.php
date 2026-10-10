@@ -25,6 +25,9 @@ Route::middleware('auth')->group(function () {
     Route::post('/game/local', [GameController::class, 'store'])
         ->middleware('throttle:10,1')
         ->name('game.store');
+    Route::post('/game/ai', [GameController::class, 'storeAi'])
+        ->middleware('throttle:10,1')
+        ->name('game.ai.store');
 
     Route::get('/game/{room:code}', [GameController::class, 'show'])->name('game.show');
     Route::get('/game/{room:code}/state', [GameController::class, 'state'])
@@ -38,4 +41,7 @@ Route::middleware('auth')->group(function () {
         ])
         ->middleware('throttle:60,1')
         ->name('game.action');
+    Route::post('/game/{room:code}/ai-step', [GameController::class, 'aiStep'])
+        ->middleware('throttle:120,1')
+        ->name('game.ai.step');
 });
