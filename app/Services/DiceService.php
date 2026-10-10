@@ -2,32 +2,62 @@
 
 namespace App\Services;
 
-use App\Exceptions\GameRuleException;
+use App\Models\GameMasterState;
+use App\Models\GamePlayer;
+use App\Models\GameRoom;
 
 class DiceService
 {
     /**
-     * Lempar dua dadu di server. $forced = [d1, d2] disiapkan untuk Game Master (Tahap 6);
-     * hasilnya tetap diproses engine seperti lemparan biasa.
+     * @param GameRoom|null $room Jika ada, cek override GM
+     * @param GamePlayer|null $player Pemain yang sedang melempar
      */
-    public function roll(?array $forced = null): array
+    public function roll(?GameRoom $room = null, ?GamePlayer $player = null): array
     {
-        if ($forced !== null) {
-            $forced = array_values($forced);
-            if (count($forced) !== 2) {
-                throw new GameRuleException('Dadu harus berisi dua nilai.');
-            }
-            [$d1, $d2] = $forced;
-            foreach ([$d1, $d2] as $d) {
-                if (! is_int($d) || $d < 1 || $d > 6) {
-                    throw new GameRuleException('Nilai dadu harus 1 sampai 6.');
+        // Cek apakah ada override dari Game Master
+        if ($room && $player) {
+            $gmState = GameMasterState::where('game_room_id', $room->id)->first();
+            
+            if ($gmState && !empty($gmState->dice_override)) {
+                $override = $gmState->dice_override;
+                
+                // Cek apakah override ditujukan untuk pemain ini atau global (null target)
+                if ($override['target_player_id'] == null || $override['target_player_id'] == $player->id) {
+                    if ($override['remaining_uses'] > 0) {
+                        $d1 = (int) $override['die1'];
+                        $d2 = (int) $override['die2'];
+                        
+                        // Kurangi sisa penggunaan
+                        $override['remaining_uses']--;
+                        if ($override['remaining_uses'] <= 0) {
+                            $gmState->dice_override = null;
+                        } else {
+                            $gmState->dice_override = $override;
+                        }
+                        $gmState->save();
+                        
+                        return [
+                            'd1' => $d1,
+                            'd2' => $d2,
+                            'total' => $d1 + $d2,
+                            'double' => $d1 === $d2,
+                            'overridden' => true,
+                        ];
+                    }
                 }
             }
-        } else {
-            $d1 = random_int(1, 6);
-            $d2 = random_int(1, 6);
         }
 
-        return ['d1' => $d1, 'd2' => $d2, 'total' => $d1 + $d2, 'double' => $d1 === $d2];
+        // Normal random roll
+        $d1 = random_int(1, 6);
+        $d2 = random_int(1, 6);
+
+        return [
+            'd1' => $d1,
+            'd2' => $d2,
+            'total' => $d1 + $d2,
+            'double' => $d1 === $d2,
+            'overridden' => false,
+        ];
     }
 }

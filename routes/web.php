@@ -3,6 +3,7 @@
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\GameController;
 use App\Http\Controllers\GameRoomController;
+use App\Http\Controllers\GameMasterController;
 use Illuminate\Support\Facades\Route;
 
 Route::view('/', 'welcome')->name('home');
@@ -22,6 +23,7 @@ Route::middleware('guest')->group(function () {
 Route::middleware('auth')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout'])->name('logout');
 
+    // --- Menu & Game Lokal/AI (Existing) ---
     Route::get('/menu', [GameController::class, 'menu'])->name('menu');
     Route::post('/game/local', [GameController::class, 'store'])
         ->middleware('throttle:10,1')
@@ -46,7 +48,7 @@ Route::middleware('auth')->group(function () {
         ->middleware('throttle:120,1')
         ->name('game.ai.step');
 
-    // Multiplayer routes
+    // --- Multiplayer Lobby (Tahap 5) ---
     Route::prefix('lobby')->name('lobby.')->group(function () {
         Route::get('/', [GameRoomController::class, 'index'])->name('index');
         Route::post('/create', [GameRoomController::class, 'create'])->name('create');
@@ -55,5 +57,16 @@ Route::middleware('auth')->group(function () {
         Route::post('/{room:code}/ready', [GameRoomController::class, 'toggleReady'])->name('ready');
         Route::post('/{room:code}/start', [GameRoomController::class, 'start'])->name('start');
         Route::post('/{room:code}/leave', [GameRoomController::class, 'leave'])->name('leave');
+    });
+
+    // --- Game Master Panel (Tahap 6) ---
+    Route::prefix('gm/{room:code}')->name('gm.')->group(function () {
+        Route::post('/money', [GameMasterController::class, 'adjustMoney'])->name('money');
+        Route::post('/dice', [GameMasterController::class, 'setDice'])->name('dice');
+        Route::post('/move', [GameMasterController::class, 'movePlayer'])->name('move');
+        Route::post('/property', [GameMasterController::class, 'giveProperty'])->name('property');
+        Route::post('/building', [GameMasterController::class, 'forceBuilding'])->name('building');
+        Route::post('/turn', [GameMasterController::class, 'changeTurn'])->name('turn');
+        Route::post('/chaos', [GameMasterController::class, 'toggleChaos'])->name('chaos');
     });
 });

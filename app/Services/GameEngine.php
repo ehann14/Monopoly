@@ -13,8 +13,6 @@ use Illuminate\Support\Facades\DB;
 /**
  * Orkestrator aturan. Semua aksi pemain (dan AI) lewat applyAction(): satu transaksi DB,
  * room dikunci, idempotensi, dan pengecekan versi.
- *
- * Fase giliran: await_roll | await_buy | await_debt | await_end
  */
 class GameEngine
 {
@@ -86,7 +84,7 @@ class GameEngine
                 'code' => GameRoom::generateCode(),
                 'host_user_id' => $host->id,
                 'mode' => $mode,
-                'status' => 'playing',
+                'status' => 'playing', // Langsung playing untuk local/ai
                 'ai_difficulty' => $difficulty,
                 'rules' => $rules,
                 'turn_phase' => 'await_roll',
@@ -128,6 +126,37 @@ class GameEngine
         });
     }
 
+    /** Inisialisasi room untuk multiplayer (dipanggil oleh GameRoomController) */
+    public function initializeMultiplayerGame(GameRoom $room): void
+    {
+        DB::transaction(function () use ($room) {
+            $room->status = 'playing';
+            $room->started_at = now();
+            $room->state_version = 1;
+            
+            // Set pemain pertama
+            $firstPlayer = $room->players()->orderBy('seat')->first();
+            $room->current_player_id = $firstPlayer->id;
+            $room->turn_phase = 'await_roll';
+            $room->turn_number = 0;
+            
+            $room->save();
+
+            // Setup papan & kartu
+            \App\Models\PropertyOwnership::where('game_room_id', $room->id)->delete();
+            \App\Models\GameCardDeck::where('game_room_id', $room->id)->delete();
+
+            foreach ($this->board->tiles() as $tile) {
+                if ($this->board->isBuyable($tile)) {
+                    PropertyOwnership::create(['game_room_id' => $room->id, 'tile_id' => $tile['id']]);
+                }
+            }
+            $this->cards->ensureDecks($room);
+
+            $this->state->log($room, 'system', "Permainan dimulai! {$firstPlayer->name} jalan pertama.");
+        });
+    }
+
     // ------------------------------------------------------------------ pintu masuk aksi
 
     public function perform(
@@ -147,7 +176,7 @@ class GameEngine
                     ->where('idempotency_key', $idempotencyKey)
                     ->exists();
                 if ($seen) {
-                    return; // permintaan ulang: sudah diproses, tidak diproses dua kali
+                    return; 
                 }
             }
 
@@ -180,11 +209,6 @@ class GameEngine
         }, 3);
     }
 
-    /**
-     * Menjalankan SATU aksi pemain AI yang sedang giliran. Keputusan datang dari AIPlayerService,
-     * eksekusinya lewat applyAction() yang sama dengan pemain manusia (aturan yang sama).
-     * Bila keputusan AI ditolak aturan, perubahannya dibatalkan dan aksi aman dijalankan.
-     */
     public function aiStep(GameRoom $room, ?int $expectedVersion = null): void
     {
         DB::transaction(function () use ($room, $expectedVersion) {
@@ -263,7 +287,6 @@ class GameEngine
         return $id;
     }
 
-    /** Setelah aksi selesai: dadu kembar (belum di penjara) = lempar lagi, selain itu boleh mengakhiri giliran. */
     private function finishAction(GameRoom $room, GamePlayer $actor): void
     {
         $room->pending = null;
@@ -286,7 +309,9 @@ class GameEngine
         }
 
         $rules = $room->rules;
-        $dice = $this->dice->roll(null);
+        // UPDATE: Melempar room dan actor ke DiceService untuk cek GM Override
+        $dice = $this->dice->roll($room, $actor);
+        
         $room->last_dice = $dice;
         if ($dice['double']) {
             $room->doubles_count = $room->doubles_count + 1;
@@ -308,7 +333,9 @@ class GameEngine
 
     private function rollInJail(GameRoom $room, GamePlayer $actor): void
     {
-        $dice = $this->dice->roll(null);
+        // UPDATE: Melempar room dan actor ke DiceService
+        $dice = $this->dice->roll($room, $actor);
+        
         $room->last_dice = $dice;
         $this->state->log($room, 'dice',
             "{$actor->name} melempar dadu di penjara: {$dice['d1']} + {$dice['d2']} = {$dice['total']}"
@@ -316,7 +343,7 @@ class GameEngine
 
         if ($dice['double']) {
             $this->jail->release($actor);
-            $room->doubles_count = 0; // keluar lewat kembar tidak memberi giliran tambahan
+            $room->doubles_count = 0; 
             $this->state->log($room, 'jail', "{$actor->name} bebas dari penjara.");
             $this->moveAndResolve($room, $actor, $dice['total']);
             return;
@@ -362,7 +389,6 @@ class GameEngine
 
     // ------------------------------------------------------------------ petak
 
-    /** @param array $opts rent_mult (int) | utility_x10 (bool) untuk efek kartu */
     private function resolveLanding(GameRoom $room, GamePlayer $actor, int $tileId, int $diceTotal, array $opts = []): void
     {
         $tile = $this->board->tile($tileId);
@@ -432,7 +458,7 @@ class GameEngine
                 $this->sendToJail($room, $actor);
                 return;
 
-            default: // start, jail (hanya berkunjung), free_parking
+            default: 
                 $this->state->log($room, 'info', "{$actor->name} singgah di {$tile['name']}.");
         }
 
@@ -454,7 +480,6 @@ class GameEngine
         }
     }
 
-    /** @return bool true bila giliran boleh diselesaikan; false bila state sudah ditangani (pindah/penjara/utang) */
     private function applyCard(GameRoom $room, GamePlayer $actor, string $deck, array $card, int $diceTotal): bool
     {
         $e = $card['effect'];
@@ -566,12 +591,6 @@ class GameEngine
 
     // ------------------------------------------------------------------ utang & kebangkrutan
 
-    /**
-     * Membayar kewajiban. @return bool true bila lunas sekarang; false bila masuk fase utang atau bangkrut
-     * (pemanggil harus berhenti dan tidak mengubah fase lagi).
-     *
-     * @param int[] $payeeIds penerima bila kewajiban dibayar ke banyak pemain ($per per orang)
-     */
     private function charge(
         GameRoom $room,
         GamePlayer $actor,
@@ -626,7 +645,6 @@ class GameEngine
         }
     }
 
-    /** Melanjutkan giliran setelah kewajiban lunas. */
     private function resume(GameRoom $room, GamePlayer $actor, array $continuation): void
     {
         $room->pending = null;
@@ -690,7 +708,7 @@ class GameEngine
         $this->requirePhase($room, 'await_buy');
         $tileId = (int) ($room->pending['tile_id'] ?? -1);
 
-        $this->properties->buy($room, $actor, $tileId); // GameRuleException bila uang kurang -> semua dibatalkan
+        $this->properties->buy($room, $actor, $tileId); 
         $tile = $this->board->tile($tileId);
         $this->state->log($room, 'buy', "{$actor->name} membeli {$tile['name']} seharga {$tile['price']}.");
         $this->finishAction($room, $actor);
