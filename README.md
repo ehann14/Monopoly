@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 <p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
 
 <p align="center">
@@ -57,3 +58,7 @@ If you discover a security vulnerability within Laravel, please send an e-mail t
 ## License
 
 The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+=======
+# Monopoly
+Permainan Monopoly online yang bisa dimainkan bersama teman atau melawan AI. Beli properti, bangun rumah dan hotel, kumpulkan uang sewa, dan susun strategi untuk menjadi pemain terkaya. Dilengkapi mode Game Master untuk mengatur jalannya permainan.
+>>>>>>> ffd6583d7ba9b64c8b3081b50c7f44fa8adccba6
