@@ -28,6 +28,7 @@ body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;b
 .tokens{position:absolute;left:0;right:0;bottom:1px;display:flex;justify-content:center;flex-wrap:wrap;gap:1px}
 .token{width:1.9em;height:1.9em;border-radius:50%;border:1px solid #222;font-size:.9em;display:grid;place-items:center;color:#111;font-weight:700}
 .token.active{outline:2px solid #fff;box-shadow:0 0 0 3px #111}
+.token.jailed{border:2px dashed #b71c1c}
 .t-start,.t-jail,.t-free_parking,.t-go_to_jail{background:#e8dfc0;font-weight:700}
 .t-chance{background:#ffe0b2}.t-chest{background:#c8e6c9}.t-tax{background:#ffcdd2}
 .center{grid-row:2/11;grid-column:2/11;background:#cfe8d5;border-radius:6px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:8px;text-align:center}
@@ -42,15 +43,25 @@ body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;b
 .panel h3{margin:0 0 8px;font-size:15px}
 .muted{color:#667;font-size:13px;margin:4px 0}
 .btn{display:block;width:100%;padding:12px;margin-top:8px;border:0;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;background:var(--bg);color:#fff}
-.btn.alt{background:#e0e0e0;color:#222}.btn.gold{background:var(--accent);color:#222}
+.btn.alt{background:#e0e0e0;color:#222}.btn.gold{background:var(--accent);color:#222}.btn.red{background:#b71c1c}
 .btn:disabled{opacity:.5;cursor:not-allowed}.btn[hidden]{display:none}
 .pcard{border:2px solid #eee;border-radius:10px;padding:8px;margin-bottom:8px}
 .pcard.current{border-color:var(--accent);background:#fffbe6}.pcard.bankrupt{opacity:.5}
 .phead{display:flex;align-items:center;gap:8px}.pmoney{margin-left:auto;font-weight:700}
+.pstat{font-size:12px;color:#b71c1c;margin-top:4px}
 .chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
 .chip{font-size:11px;padding:2px 6px;border-radius:8px;background:#ddd;border-left:6px solid #999}
 .dname{font-weight:800;font-size:17px;margin-bottom:6px}
 .row{display:flex;justify-content:space-between;font-size:13px;padding:2px 0;border-bottom:1px dashed #eee}
+.mrow{border-top:1px solid #eee;padding:6px 0}
+.mname{font-weight:700;font-size:13px;display:flex;align-items:center;gap:6px}
+.mbtns{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+.mbtn{padding:6px 8px;border:0;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;background:var(--bg);color:#fff}
+.mbtn:disabled{opacity:.4;cursor:not-allowed}
+.mreason{font-size:11px;color:#a33;margin-top:2px}
+.cardbox{border:2px dashed #999;border-radius:10px;padding:8px;background:#fffdf0}
+.cardbox.chance{border-color:#f57c00}.cardbox.chest{border-color:#2e7d32}
+.cardbox .ctitle{font-weight:800}
 #log{list-style:none;margin:0;padding:0;max-height:220px;overflow:auto;font-size:13px}
 #log li{padding:3px 0;border-bottom:1px solid #f0f0f0}
 #toast{position:fixed;left:50%;top:14px;transform:translateX(-50%);background:#b00020;color:#fff;padding:10px 16px;border-radius:10px;font-size:14px;z-index:50;display:none;max-width:90vw}
@@ -58,8 +69,8 @@ details.panel summary{cursor:pointer;font-weight:700}
 details.panel p{font-size:13px;margin:6px 0}
 @media (max-width:980px){
   .layout{grid-template-columns:1fr;padding:8px}
-  body{padding-bottom:190px}
-  .actions{position:fixed;left:0;right:0;bottom:0;z-index:20;margin:0;border-radius:14px 14px 0 0;box-shadow:0 -4px 14px rgba(0,0,0,.3)}
+  body{padding-bottom:42vh}
+  .actions{position:fixed;left:0;right:0;bottom:0;z-index:20;margin:0;border-radius:14px 14px 0 0;box-shadow:0 -4px 14px rgba(0,0,0,.3);max-height:42vh;overflow:auto}
 }
 </style>
 </head>
@@ -79,11 +90,17 @@ details.panel p{font-size:13px;margin:6px 0}
             <h3>Aksi</h3>
             <p class="muted" id="hint"></p>
             <button class="btn gold" id="btnRoll" type="button" hidden>Lempar dadu</button>
+            <button class="btn" id="btnPayJail" type="button" hidden>Bayar denda penjara</button>
+            <button class="btn" id="btnJailCard" type="button" hidden>Pakai kartu bebas penjara</button>
             <button class="btn" id="btnBuy" type="button" hidden>Beli</button>
             <button class="btn alt" id="btnDecline" type="button" hidden>Tidak membeli</button>
+            <button class="btn gold" id="btnPayDebt" type="button" hidden>Bayar utang</button>
+            <button class="btn red" id="btnBankrupt" type="button" hidden>Menyatakan bangkrut</button>
             <button class="btn" id="btnEnd" type="button" hidden>Akhiri giliran</button>
         </section>
 
+        <section class="panel" id="cardPanel" hidden></section>
+        <section class="panel" id="manage"></section>
         <section class="panel"><h3>Pemain</h3><div id="players"></div></section>
         <section class="panel" id="detail"></section>
         <section class="panel"><h3>Log permainan</h3><ul id="log"></ul></section>
@@ -91,11 +108,14 @@ details.panel p{font-size:13px;margin:6px 0}
         <details class="panel">
             <summary>Bantuan aturan</summary>
             <p>Lempar dua dadu dan bergerak searah jarum jam. Melewati START memberi gaji.</p>
-            <p>Petak properti yang belum dimiliki bisa dibeli. Jika menolak, properti tetap milik bank (lelang belum tersedia).</p>
+            <p>Properti yang belum dimiliki bisa dibeli. Jika menolak, properti tetap milik bank (lelang belum tersedia).</p>
             <p>Mendarat di properti orang lain berarti membayar sewa. Memiliki seluruh kelompok warna menggandakan sewa dasar.</p>
-            <p>Dadu kembar memberi giliran tambahan. Dadu kembar 3 kali berturut-turut mengakhiri giliran tanpa bergerak.</p>
-            <p>Pemain yang tidak mampu membayar langsung bangkrut. Pemain terakhir yang tersisa menang.</p>
-            <p>Belum aktif: rumah/hotel, hipotek, penjara, kartu (Tahap 3), AI (Tahap 4), online (Tahap 5).</p>
+            <p>Rumah dan hotel: miliki satu kelompok warna penuh (tidak ada yang digadai), bangun merata. 4 rumah + 1 pembangunan lagi menjadi hotel. Bangunan dijual dengan setengah harga, juga merata.</p>
+            <p>Hipotek: jual semua bangunan di kelompoknya dulu. Menebus butuh nilai gadai + 10%. Properti yang digadai tidak menarik sewa.</p>
+            <p>Penjara: masuk lewat petak Masuk Penjara, dadu kembar ke-3, atau kartu. Keluar dengan membayar denda, kartu bebas penjara, atau dadu kembar. Gagal 3 kali: wajib bayar denda lalu bergerak.</p>
+            <p>Kartu Kesempatan dan Dana Umum dijalankan otomatis saat mendarat di petaknya.</p>
+            <p>Utang: jika uang kurang tapi aset cukup, jual bangunan atau gadaikan properti lalu bayar. Jika semua aset tidak cukup, pemain bangkrut. Pemain terakhir yang tersisa menang.</p>
+            <p>Belum aktif: AI (Tahap 4), online (Tahap 5), Game Master (Tahap 6).</p>
         </details>
     </aside>
 </main>
@@ -110,6 +130,11 @@ const COLORS = {merah:'#e53935', biru:'#1e88e5', hijau:'#43a047', kuning:'#fdd83
 const TYPE_NAMES = {start:'START', property:'Properti', station:'Stasiun', utility:'Utilitas', tax:'Pajak',
     chance:'Kesempatan', chest:'Dana Umum', jail:'Penjara / hanya berkunjung', free_parking:'Parkir Bebas', go_to_jail:'Masuk Penjara'};
 const RENT_LABELS = ['Sewa dasar', 'Dengan 1 rumah', 'Dengan 2 rumah', 'Dengan 3 rumah', 'Dengan 4 rumah', 'Dengan hotel'];
+const MANAGE_BTNS = [['build', 'Bangun'], ['sell', 'Jual bangunan'], ['mortgage', 'Gadai'], ['unmortgage', 'Tebus']];
+const ACTION_BUTTONS = {
+    roll: 'btnRoll', pay_jail: 'btnPayJail', use_jail_card: 'btnJailCard', buy: 'btnBuy', decline: 'btnDecline',
+    pay_debt: 'btnPayDebt', declare_bankruptcy: 'btnBankrupt', end_turn: 'btnEnd'
+};
 
 let state = DATA.snapshot;
 let busy = false;
@@ -185,7 +210,8 @@ function renderBoard() {
         state.players.filter((p) => !p.is_bankrupt && p.position === t.id).forEach((p) => {
             const tk = el('span', 'token', p.name.charAt(0).toUpperCase());
             tk.style.background = COLORS[p.token] || '#999';
-            tk.title = p.name;
+            tk.title = p.in_jail ? p.name + ' (dipenjara)' : p.name;
+            if (p.in_jail) tk.classList.add('jailed');
             if (p.id === state.current_player_id && state.room.status === 'playing') tk.classList.add('active');
             refs.tokens.appendChild(tk);
         });
@@ -239,9 +265,8 @@ function renderCenter() {
 
 function renderActions() {
     const a = state.actions;
-    const map = {roll: 'btnRoll', buy: 'btnBuy', decline: 'btnDecline', end_turn: 'btnEnd'};
-    Object.keys(map).forEach((act) => {
-        const b = $(map[act]);
+    Object.keys(ACTION_BUTTONS).forEach((act) => {
+        const b = $(ACTION_BUTTONS[act]);
         b.hidden = !a.includes(act);
         b.disabled = busy;
     });
@@ -253,17 +278,94 @@ function renderActions() {
     } else if (!state.can_act) {
         hint = cur ? 'Menunggu giliran ' + cur.name + '.' : '';
     } else if (state.phase === 'await_roll') {
-        hint = 'Giliran ' + cur.name + ': lempar dadu.';
+        if (cur.in_jail) {
+            hint = cur.name + ' di penjara (gagal ' + cur.jail_turns + '/' + state.rules.max_jail_turns
+                + '). Lempar dadu (kembar = bebas), bayar denda, atau pakai kartu bebas penjara.';
+            $('btnPayJail').textContent = 'Bayar denda penjara (' + money(state.rules.jail_fine) + ')';
+        } else {
+            hint = 'Giliran ' + cur.name + ': lempar dadu. Anda juga bisa mengelola properti.';
+        }
     } else if (state.phase === 'await_buy' && state.pending) {
         const t = DATA.tiles[state.pending.tile_id];
         hint = t.name + ' belum dimiliki. Harga ' + money(state.pending.price) + ', saldo ' + money(cur.money) + '.';
         $('btnBuy').textContent = 'Beli ' + t.name + ' (' + money(state.pending.price) + ')';
         $('btnBuy').disabled = busy || !state.can_buy;
-        if (!state.can_buy) hint += ' Uang tidak cukup untuk membeli.';
+        if (!state.can_buy) hint += ' Uang tidak cukup. Gadaikan atau jual bangunan bila perlu.';
+    } else if (state.phase === 'await_debt' && state.pending) {
+        const d = state.pending;
+        hint = 'Utang ' + money(d.amount) + ' (' + d.reason + '). Saldo ' + money(cur.money)
+            + '. Jual bangunan atau gadaikan properti sampai cukup, lalu bayar.';
+        $('btnPayDebt').textContent = 'Bayar utang (' + money(d.amount) + ')';
+        $('btnPayDebt').disabled = busy || !a.includes('pay_debt');
     } else if (state.phase === 'await_end') {
         hint = 'Selesaikan giliran Anda.';
     }
     $('hint').textContent = hint;
+}
+
+function renderCardPanel() {
+    const box = $('cardPanel');
+    let last = null;
+    for (let i = state.logs.length - 1; i >= 0; i--) {
+        if (state.logs[i].type === 'card' && state.logs[i].card) { last = state.logs[i].card; break; }
+    }
+    if (!last) { box.hidden = true; return; }
+    box.hidden = false;
+    box.replaceChildren();
+    box.appendChild(el('h3', null, 'Kartu terakhir'));
+    const cb = el('div', 'cardbox ' + last.deck);
+    cb.appendChild(el('div', 'muted', (last.deck === 'chance' ? 'Kesempatan' : 'Dana Umum') + ' — ' + last.player));
+    cb.appendChild(el('div', 'ctitle', last.title));
+    cb.appendChild(el('div', null, last.text));
+    box.appendChild(cb);
+}
+
+function renderManage() {
+    const box = $('manage');
+    box.replaceChildren();
+    box.appendChild(el('h3', null, 'Kelola properti'));
+    box.appendChild(el('p', 'muted', 'Stok bank: ' + state.bank.houses_left + ' rumah, ' + state.bank.hotels_left + ' hotel.'));
+
+    const ids = Object.keys(state.manage || {});
+    if (!state.can_act || ids.length === 0) {
+        box.appendChild(el('p', 'muted', 'Muncul saat giliran Anda dan Anda memiliki properti.'));
+        return;
+    }
+
+    ids.forEach((id) => {
+        const t = DATA.tiles[id];
+        const m = state.manage[id];
+        const pr = state.properties[id];
+        const rowEl = el('div', 'mrow');
+
+        const nm = el('div', 'mname');
+        const dot = el('span', 'dot');
+        dot.style.background = t.group ? DATA.groups[t.group].color : '#777';
+        nm.appendChild(dot);
+        let label = t.name;
+        if (pr.hotel) label += ' (hotel)';
+        else if (pr.houses > 0) label += ' (' + pr.houses + ' rumah)';
+        if (pr.mortgaged) label += ' [gadai]';
+        nm.appendChild(el('span', null, label));
+        rowEl.appendChild(nm);
+
+        const btns = el('div', 'mbtns');
+        MANAGE_BTNS.forEach((def) => {
+            const key = def[0];
+            const info = m[key];
+            if (!info) return;
+            const bt = el('button', 'mbtn', def[1] + ' (' + money(info.amount) + ')');
+            bt.type = 'button';
+            bt.disabled = busy || !info.ok;
+            if (info.reason) bt.title = info.reason;
+            bt.addEventListener('click', () => act(key === 'sell' ? 'sell_building' : key, {tile_id: Number(id)}));
+            btns.appendChild(bt);
+        });
+        rowEl.appendChild(btns);
+
+        if (m.build && !m.build.ok && m.build.reason) rowEl.appendChild(el('div', 'mreason', 'Bangun: ' + m.build.reason));
+        box.appendChild(rowEl);
+    });
 }
 
 function renderPlayers() {
@@ -281,6 +383,11 @@ function renderPlayers() {
         head.appendChild(el('strong', null, p.name));
         head.appendChild(el('span', 'pmoney', p.is_bankrupt ? 'Bangkrut' : money(p.money)));
         card.appendChild(head);
+
+        const stat = [];
+        if (p.in_jail) stat.push('Di penjara');
+        if (p.jail_cards > 0) stat.push(p.jail_cards + ' kartu bebas penjara');
+        if (stat.length) card.appendChild(el('div', 'pstat', stat.join(' · ')));
 
         const chips = el('div', 'chips');
         Object.keys(state.properties).forEach((tileId) => {
@@ -334,6 +441,7 @@ function renderDetail() {
     if (t.type === 'utility') {
         Object.keys(DATA.utilityMultiplier).forEach((n) => box.appendChild(row('Sewa (' + n + ' utilitas)', DATA.utilityMultiplier[n] + ' x dadu')));
     }
+    if (t.type === 'jail') box.appendChild(row('Denda keluar penjara', money(state.rules.jail_fine)));
     const pr = state.properties[t.id];
     if (pr) {
         const owner = pr.owner !== null ? playerById(pr.owner) : null;
@@ -356,6 +464,8 @@ function render() {
     renderBoard();
     renderCenter();
     renderActions();
+    renderCardPanel();
+    renderManage();
     renderPlayers();
     renderDetail();
     renderSelection();
@@ -399,10 +509,11 @@ async function refresh() {
     }
 }
 
-async function act(action) {
+async function act(action, params) {
     if (busy) return;
     busy = true;
     renderActions();
+    renderManage();
     try {
         const r = await fetch(DATA.urls.action.replace('__ACTION__', action), {
             method: 'POST',
@@ -413,7 +524,7 @@ async function act(action) {
                 'Content-Type': 'application/json',
                 'Idempotency-Key': uuid(),
             },
-            body: JSON.stringify({expected_version: state.version}),
+            body: JSON.stringify(Object.assign({expected_version: state.version}, params || {})),
         });
         let body = {};
         try { body = await r.json(); } catch (e) { body = {}; }
@@ -430,12 +541,19 @@ async function act(action) {
     } finally {
         busy = false;
         renderActions();
+        renderManage();
     }
 }
 
 $('btnRoll').addEventListener('click', () => act('roll'));
+$('btnPayJail').addEventListener('click', () => act('pay_jail'));
+$('btnJailCard').addEventListener('click', () => act('use_jail_card'));
 $('btnBuy').addEventListener('click', () => act('buy'));
 $('btnDecline').addEventListener('click', () => act('decline'));
+$('btnPayDebt').addEventListener('click', () => act('pay_debt'));
+$('btnBankrupt').addEventListener('click', () => {
+    if (window.confirm('Yakin menyatakan bangkrut? Aksi ini tidak bisa dibatalkan.')) act('declare_bankruptcy');
+});
 $('btnEnd').addEventListener('click', () => act('end_turn'));
 
 buildBoard();

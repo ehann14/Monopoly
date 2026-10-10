@@ -34,6 +34,23 @@ class GameRoom extends Model
         return $this->players()->where('user_id', $user->id)->exists();
     }
 
+    /**
+     * Apakah $user boleh menjalankan aksi atas nama $player?
+     * - game lokal (hot-seat): host mengendalikan semua pemain
+     * - game online: hanya pemilik kursi tersebut; AI tidak dikendalikan siapa pun
+     */
+    public function userControls(User $user, GamePlayer $player): bool
+    {
+        if ($player->is_ai) {
+            return false;
+        }
+        if ($this->mode === 'local') {
+            return (int) $this->host_user_id === (int) $user->id;
+        }
+
+        return $player->user_id !== null && (int) $player->user_id === (int) $user->id;
+    }
+
     public static function generateCode(): string
     {
         $alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // tanpa karakter ambigu

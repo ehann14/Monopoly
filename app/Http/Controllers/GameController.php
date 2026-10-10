@@ -82,8 +82,12 @@ class GameController extends Controller
         $version = $request->input('expected_version');
         $version = is_numeric($version) ? (int) $version : null;
 
+        // Hanya tile_id yang diteruskan ke engine; nilainya divalidasi ulang di sana.
+        $tile = $request->input('tile_id');
+        $params = ['tile_id' => is_numeric($tile) ? (int) $tile : null];
+
         try {
-            $engine->perform($request->user(), $room, $action, $key, $version);
+            $engine->perform($request->user(), $room, $action, $key, $version, $params);
         } catch (GameRuleException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         }

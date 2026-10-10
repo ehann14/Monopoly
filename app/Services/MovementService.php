@@ -4,7 +4,7 @@ namespace App\Services;
 
 use App\Models\GamePlayer;
 
-/** Pergerakan bidak. Semua perpindahan maju lewat sini agar gaji START konsisten. */
+/** Pergerakan bidak. Semua perpindahan lewat sini agar gaji START konsisten. */
 class MovementService
 {
     public function __construct(
@@ -30,5 +30,28 @@ class MovementService
         }
 
         return ['from' => $from, 'to' => $to, 'passed_start' => $passed];
+    }
+
+    /** Maju ke petak tertentu (efek kartu). Menerima gaji bila melewati START. */
+    public function moveTo(array $rules, GamePlayer $player, int $to): array
+    {
+        $from = (int) $player->position;
+        $passed = $to < $from;
+
+        $player->position = $to;
+        if ($passed) {
+            $this->tx->credit($player, (int) $rules['salary']);
+        } else {
+            $player->save();
+        }
+
+        return ['from' => $from, 'to' => $to, 'passed_start' => $passed];
+    }
+
+    /** Pindah tanpa gaji (penjara, mundur). */
+    public function jumpTo(GamePlayer $player, int $to): void
+    {
+        $player->position = $to;
+        $player->save();
     }
 }

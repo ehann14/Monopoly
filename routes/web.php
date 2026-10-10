@@ -31,7 +31,11 @@ Route::middleware('auth')->group(function () {
         ->middleware('throttle:120,1')
         ->name('game.state');
     Route::post('/game/{room:code}/action/{action}', [GameController::class, 'action'])
-        ->whereIn('action', ['roll', 'buy', 'decline', 'end_turn'])
+        ->whereIn('action', [
+            'roll', 'buy', 'decline', 'end_turn',
+            'build', 'sell_building', 'mortgage', 'unmortgage',
+            'pay_jail', 'use_jail_card', 'pay_debt', 'declare_bankruptcy',
+        ])
         ->middleware('throttle:60,1')
         ->name('game.action');
 });

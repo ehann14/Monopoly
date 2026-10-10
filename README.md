@@ -1,64 +1,129 @@
-<<<<<<< HEAD
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Monopoly Web Game
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+Permainan Monopoly berbasis web yang dibuat dengan Laravel. Tujuan akhirnya: bermain melawan AI atau bersama teman secara online, dengan satu akun **Owner / Game Master** yang bisa ikut bermain sekaligus mengatur jalannya permainan.
 
-## About Laravel
+> **Status:** Tahap 1–3 selesai (game lokal hot-seat dengan aturan lengkap). AI, multiplayer online, panel Game Master, dan real-time masih dalam pengerjaan.
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+## Fitur saat ini
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+- Papan 40 petak (properti, stasiun, utilitas, pajak, kartu, penjara, parkir bebas) dengan konfigurasi di satu tempat (`config/monopoly.php`).
+- Game lokal 2–4 pemain di satu perangkat (hot-seat), dikendalikan oleh host.
+- Dadu dihasilkan server, pergerakan bidak, gaji START, dadu kembar dan giliran tambahan.
+- Beli properti dan sewa (properti, stasiun, utilitas, bonus kelompok warna lengkap).
+- Rumah dan hotel: wajib punya satu kelompok warna penuh, pembangunan dan penjualan merata, stok bank terbatas.
+- Hipotek: gadai dan tebus (nilai gadai + bunga 10%).
+- Penjara: masuk lewat petak, dadu kembar ke-3, atau kartu; keluar dengan denda, kartu bebas penjara, atau dadu kembar.
+- Kartu Kesempatan dan Dana Umum (12 kartu per dek, diacak server).
+- Utang dan kebangkrutan: jual bangunan atau gadai untuk melunasi; jika aset tidak cukup, pemain bangkrut.
+- Keamanan: validasi di server, kunci baris database + transaksi, idempotency key, pengecekan versi state, rate limiting, policy akses room.
+- Akun Owner dibuat lewat perintah Artisan (tidak ada pendaftaran publik untuk role owner).
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+## Belum tersedia
 
-## Learning Laravel
+| Tahap | Isi |
+|---|---|
+| 4 | AI lawan (Easy dan Hard) |
+| 5 | Multiplayer online: room, kode room, lobby, reconnect |
+| 6 | Panel Game Master (uang, dadu, properti, posisi, giliran, audit log privat) |
+| 7 | Real-time Laravel Reverb/Echo, finalisasi, dokumentasi deployment |
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework. You can also check out [Laravel Learn](https://laravel.com/learn), where you will be guided through building a modern Laravel application.
+Lelang properti juga belum ada (tombolnya sengaja tidak ditampilkan).
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+## Teknologi
 
-## Laravel Sponsors
+- PHP 8.2+ dan Laravel 12
+- Blade, HTML, CSS, JavaScript (tanpa framework frontend)
+- MySQL/MariaDB (SQLite dipakai untuk test)
+- Laravel Reverb dan Echo (disiapkan untuk Tahap 7)
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+## Setup
 
-### Premium Partners
+Prasyarat: PHP 8.2+, Composer, Node.js, dan MySQL/MariaDB (misalnya XAMPP).
 
-- **[Vehikl](https://vehikl.com)**
-- **[Tighten Co.](https://tighten.co)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Redberry](https://redberry.international/laravel-development)**
-- **[Active Logic](https://activelogic.com)**
+```powershell
+composer install
+copy .env.example .env
+php artisan key:generate
+```
 
-## Contributing
+Buka `.env` dan atur database. Contoh untuk MySQL/MariaDB:
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+```env
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=monopoly
+DB_USERNAME=root
+DB_PASSWORD=
+```
 
-## Code of Conduct
+Buat database `monopoly` terlebih dahulu (phpMyAdmin atau `CREATE DATABASE monopoly;`), lalu:
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+```powershell
+php artisan migrate
+npm install
+npm run build
+```
 
-## Security Vulnerabilities
+### Membuat akun Owner
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+Hanya satu akun owner yang diizinkan. Password diminta lewat input tersembunyi (minimal 12 karakter) dan tidak disimpan di source code.
 
-## License
+```powershell
+php artisan monopoly:create-owner
+```
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
-=======
-# Monopoly
-Permainan Monopoly online yang bisa dimainkan bersama teman atau melawan AI. Beli properti, bangun rumah dan hotel, kumpulkan uang sewa, dan susun strategi untuk menjadi pemain terkaya. Dilengkapi mode Game Master untuk mengatur jalannya permainan.
->>>>>>> ffd6583d7ba9b64c8b3081b50c7f44fa8adccba6
+### Menjalankan
+
+```powershell
+php artisan serve
+```
+
+Buka http://127.0.0.1:8000, daftar atau login, lalu mulai game lokal dari menu.
+
+## Test
+
+```powershell
+php artisan test
+```
+
+Cakupan saat ini: papan dan perhitungan sewa, autentikasi dan pembatasan owner, alur game (gerak, beli, sewa, dadu kembar, idempotensi, versi state, akses), serta Tahap 3 (bangunan, hipotek, penjara, kartu, utang, kebangkrutan).
+
+## Struktur kode
+
+```
+app/
+  Console/Commands/CreateOwner.php   Pembuatan akun owner
+  Http/Controllers/                  AuthController, GameController
+  Http/Middleware/EnsureOwner.php    Pembatas akses owner (404 untuk pengguna biasa)
+  Models/                            GameRoom, GamePlayer, PropertyOwnership, GameCardDeck, ...
+  Policies/GameRoomPolicy.php        Hanya host/anggota room yang boleh mengakses game
+  Services/
+    GameEngine.php                   Orkestrator aksi (satu transaksi per aksi)
+    BoardService, DiceService, MovementService, TurnManager
+    PropertyService, RentService, TransactionService
+    BuildingService, MortgageService, JailService, CardService, BankruptcyService
+    GameStateService                 Snapshot publik state game
+config/
+  monopoly.php                       Aturan, papan, harga, sewa
+  monopoly_cards.php                 Definisi kartu Kesempatan dan Dana Umum
+resources/views/game.blade.php       Halaman permainan
+tests/                               Unit dan Feature test
+```
+
+## Prinsip desain
+
+- **Server adalah sumber kebenaran.** Browser hanya mengirim permintaan aksi; saldo, dadu, kepemilikan, dan giliran ditentukan server.
+- **Satu pintu perubahan state.** Semua aksi lewat `GameEngine::perform()`: room dikunci, aksi divalidasi, lalu di-commit atau dibatalkan seluruhnya.
+- **Aturan satu sumber.** Alasan penolakan aksi (mis. kenapa belum bisa membangun) dihasilkan service yang sama dengan yang dipakai engine, sehingga UI dan aturan tidak bisa berbeda.
+- **Log publik dan audit privat dipisah**, supaya aksi rahasia Game Master (Tahap 6) tidak bocor ke pemain lain.
+
+## Catatan aturan
+
+- Membangun dan menebus hanya di giliran sendiri (sebelum melempar dadu atau setelah aksi selesai); menjual dan menggadai juga bisa saat menunggu keputusan beli atau melunasi utang.
+- Bangkrut ke pemain: uang dan properti pindah (status gadai tetap, bangunan dikembalikan ke bank). Bangkrut ke bank: properti kembali ke bank tanpa gadai.
+- Kartu "terima dari tiap pemain": pemain yang uangnya kurang membayar sebisanya.
+
+## Lisensi
+
+Proyek pribadi. Framework Laravel berlisensi [MIT](https://opensource.org/licenses/MIT).

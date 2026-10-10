@@ -148,14 +148,18 @@ class GameFlowTest extends TestCase
         $this->assertSame(1, $room->doubles_count);
     }
 
-    public function test_third_double_ends_turn_without_moving(): void
+    public function test_third_double_sends_to_jail(): void
     {
         $room = $this->newGame();
         $room->forceFill(['doubles_count' => 2])->save();
         $this->dice->queue = [[2, 2]];
 
         $this->act($room, 'roll')->assertOk()->assertJsonPath('phase', 'await_end');
-        $this->assertSame(0, $this->player($room, 'Ana')->position);
+
+        $ana = $this->player($room, 'Ana');
+        $this->assertTrue($ana->in_jail);
+        $this->assertSame(10, $ana->position);
+        $this->assertSame(1500, $ana->money); // masuk penjara tidak menerima gaji
     }
 
     public function test_actions_out_of_phase_are_rejected(): void
