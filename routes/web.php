@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\GameController;
 use Illuminate\Support\Facades\Route;
 
 Route::view('/', 'welcome')->name('home');
@@ -19,5 +20,18 @@ Route::middleware('guest')->group(function () {
 
 Route::middleware('auth')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout'])->name('logout');
-    Route::view('/menu', 'menu')->name('menu');
+
+    Route::get('/menu', [GameController::class, 'menu'])->name('menu');
+    Route::post('/game/local', [GameController::class, 'store'])
+        ->middleware('throttle:10,1')
+        ->name('game.store');
+
+    Route::get('/game/{room:code}', [GameController::class, 'show'])->name('game.show');
+    Route::get('/game/{room:code}/state', [GameController::class, 'state'])
+        ->middleware('throttle:120,1')
+        ->name('game.state');
+    Route::post('/game/{room:code}/action/{action}', [GameController::class, 'action'])
+        ->whereIn('action', ['roll', 'buy', 'decline', 'end_turn'])
+        ->middleware('throttle:60,1')
+        ->name('game.action');
 });

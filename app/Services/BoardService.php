@@ -11,6 +11,11 @@ class BoardService
         return config('monopoly.board');
     }
 
+    public function size(): int
+    {
+        return count($this->tiles());
+    }
+
     public function tile(int $id): array
     {
         $tile = config("monopoly.board.$id");
@@ -46,6 +51,15 @@ class BoardService
     {
         return array_values(array_column(
             array_filter($this->tiles(), fn ($t) => ($t['group'] ?? null) === $group),
+            'id'
+        ));
+    }
+
+    /** @return int[] id petak dengan jenis tertentu (station, utility, ...) */
+    public function tileIdsOfType(string $type): array
+    {
+        return array_values(array_column(
+            array_filter($this->tiles(), fn ($t) => $t['type'] === $type),
             'id'
         ));
     }
