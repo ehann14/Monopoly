@@ -8,12 +8,10 @@ use App\Models\GamePlayer;
 use App\Models\GameRoom;
 use App\Models\PropertyOwnership;
 use App\Models\User;
+use Illuminate\Support\Facades\Log;
 
 class GameStateService
 {
-    /**
-     * Membuat snapshot publik state game untuk dikirim ke frontend.
-     */
     public function snapshot(GameRoom $room, User $user): array
     {
         $players = $room->players()->orderBy('seat')->get();
@@ -24,6 +22,49 @@ class GameStateService
             ->get()
             ->reverse()
             ->values();
+
+        $currentPlayer = $players->firstWhere('id', $room->current_player_id);
+        $currentUserPlayer = $players->firstWhere('user_id', $user->id);
+
+        // Tentukan aksi yang tersedia untuk pemain saat ini
+        $actions = [];
+        $canAct = false;
+        
+        if ($currentPlayer && !$currentPlayer->is_ai) {
+            $isMyTurn = $currentUserPlayer && $currentUserPlayer->id === $currentPlayer->id;
+            $isLocalHost = $room->mode === 'local' && $room->host_user_id === $user->id;
+            
+            if ($isMyTurn || $isLocalHost) {
+                $canAct = true;
+                
+                if ($room->turn_phase === 'await_roll') {
+                    $actions[] = 'roll';
+                    if ($currentPlayer->in_jail) {
+                        $actions[] = 'pay_jail';
+                        if ($currentPlayer->jail_cards > 0) {
+                            $actions[] = 'use_jail_card';
+                        }
+                    }
+                } elseif ($room->turn_phase === 'await_buy') {
+                    $actions[] = 'buy';
+                    $actions[] = 'decline';
+                } elseif ($room->turn_phase === 'await_end') {
+                    $actions[] = 'end_turn';
+                    $actions[] = 'build';
+                    $actions[] = 'sell_building';
+                    $actions[] = 'mortgage';
+                    $actions[] = 'unmortgage';
+                } elseif ($room->turn_phase === 'await_debt') {
+                    $actions[] = 'pay_debt';
+                    $actions[] = 'declare_bankruptcy';
+                    $actions[] = 'sell_building';
+                    $actions[] = 'mortgage';
+                }
+            }
+        }
+
+        // Cek apakah AI harus jalan
+        $aiTurn = $currentPlayer && $currentPlayer->is_ai && !$currentPlayer->is_bankrupt && $room->status === 'playing';
 
         return [
             'room' => [
@@ -41,7 +82,7 @@ class GameStateService
             ],
             'players' => $players->map(fn (GamePlayer $p) => [
                 'id' => $p->id,
-                'name' => $p->name,
+                'name' => e($p->name), // Escape untuk mencegah XSS
                 'token' => $p->token,
                 'money' => $p->money,
                 'position' => $p->position,
@@ -62,15 +103,17 @@ class GameStateService
             ])->toArray(),
             'logs' => $logs->map(fn (GameLog $l) => [
                 'type' => $l->type,
-                'message' => $l->message,
+                'message' => e($l->message), // Escape untuk mencegah XSS
             ])->toArray(),
             'version' => $room->state_version,
+            'phase' => $room->turn_phase,
+            'actions' => $actions,
+            'can_act' => $canAct,
+            'manage' => $currentUserPlayer && ($room->host_user_id === $user->id || $room->mode === 'local'),
+            'ai_turn' => $aiTurn,
         ];
     }
 
-    /**
-     * Menulis log publik permainan.
-     */
     public function log(GameRoom $room, string $type, string $message, ?array $payload = null): void
     {
         GameLog::create([
@@ -82,21 +125,21 @@ class GameStateService
         ]);
     }
 
-    /**
-     * Broadcast state terbaru ke semua pemain di room.
-     * DIPANGGIL SETELAH TRANSAKSI BERHASIL DI-COMMIT.
-     */
     public function broadcastState(GameRoom $room): void
     {
-        // Kita butuh user dummy untuk snapshot karena snapshot bersifat publik
-        // Ambil host sebagai referensi, tapi snapshot tidak mengandung data privat
-        $host = $room->host;
-        if (!$host) {
-            return;
+        try {
+            // Ambil host sebagai referensi untuk membuat snapshot publik
+            $host = $room->load('host')->host;
+            if (!$host) {
+                return;
+            }
+
+            $snapshot = $this->snapshot($room, $host);
+            
+            // Broadcast hanya versi dan event, bukan data sensitif
+            event(new GameStateChanged($room, $snapshot));
+        } catch (\Exception $e) {
+            Log::warning('Broadcast failed: ' . $e->getMessage());
         }
-
-        $snapshot = $this->snapshot($room, $host);
-
-        event(new GameStateChanged($room, $snapshot));
     }
 }

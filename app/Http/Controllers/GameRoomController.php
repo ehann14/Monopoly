@@ -14,6 +14,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
@@ -40,46 +41,50 @@ class GameRoomController extends Controller
 
     public function create(Request $request): RedirectResponse
     {
-        $data = $request->validate([
+        $validated = $request->validate([
             'name' => ['nullable', 'string', 'max:100'],
             'max_players' => ['required', 'integer', 'min:2', 'max:4'],
             'is_public' => ['sometimes', 'boolean'],
         ]);
 
-        $room = GameRoom::create([
-            'code' => GameRoom::generateCode(),
-            'name' => $data['name'] ?? null,
-            'host_user_id' => $request->user()->id,
-            'mode' => 'multiplayer',
-            'status' => 'waiting',
-            'max_players' => $data['max_players'],
-            'is_public' => $data['is_public'] ?? true,
-            'rules' => config('monopoly.rules'),
-            'turn_phase' => 'await_roll',
-            'state_version' => 0,
-        ]);
+        // Buat room tanpa mass-assignment pada guarded fields
+        $room = new GameRoom();
+        $room->code = GameRoom::generateCode();
+        $room->name = $validated['name'] ?? null;
+        $room->host_user_id = $request->user()->id;
+        $room->mode = 'multiplayer';
+        $room->status = 'waiting';
+        $room->max_players = $validated['max_players'];
+        $room->is_public = $validated['is_public'] ?? true;
+        $room->rules = config('monopoly.rules');
+        $room->turn_phase = 'await_roll';
+        $room->state_version = 0;
+        $room->save();
 
-        $player = GamePlayer::create([
-            'game_room_id' => $room->id,
-            'user_id' => $request->user()->id,
-            'name' => mb_substr($request->user()->name, 0, 40),
-            'is_ai' => false,
-            'seat' => 0,
-            'token' => config('monopoly.tokens')[0],
-            'is_ready' => false,
-            'position' => 0,
-            'money' => (int) config('monopoly.rules.starting_money'),
-        ]);
+        $player = new GamePlayer();
+        $player->game_room_id = $room->id;
+        $player->user_id = $request->user()->id;
+        $player->name = mb_substr($request->user()->name, 0, 40);
+        $player->is_ai = false;
+        $player->seat = 0;
+        $player->token = config('monopoly.tokens')[0];
+        $player->is_ready = false;
+        $player->position = 0;
+        $player->money = (int) config('monopoly.rules.starting_money');
+        $player->save();
 
-        // Broadcast player joined
-        event(new GamePlayerJoined($room, $player));
+        try {
+            event(new GamePlayerJoined($room, $player));
+        } catch (\Exception $e) {
+            Log::warning('Failed to broadcast player joined: ' . $e->getMessage());
+        }
 
         return redirect()->route('lobby.show', $room->code);
     }
 
     public function join(Request $request, string $code): RedirectResponse
     {
-        $room = GameRoom::where('code', $code)->firstOrFail();
+        $room = GameRoom::where('code', strtoupper($code))->firstOrFail();
 
         if ($room->status !== 'waiting') {
             throw ValidationException::withMessages([
@@ -105,7 +110,11 @@ class GameRoomController extends Controller
                 'reconnected_at' => now(),
             ]);
 
-            event(new GamePlayerJoined($room, $existingPlayer));
+            try {
+                event(new GamePlayerJoined($room, $existingPlayer));
+            } catch (\Exception $e) {
+                Log::warning('Failed to broadcast rejoin: ' . $e->getMessage());
+            }
 
             return redirect()->route('lobby.show', $room->code);
         }
@@ -113,25 +122,28 @@ class GameRoomController extends Controller
         $nextSeat = $room->players()->max('seat') + 1;
         $tokens = config('monopoly.tokens');
 
-        $player = GamePlayer::create([
-            'game_room_id' => $room->id,
-            'user_id' => $request->user()->id,
-            'name' => mb_substr($request->user()->name, 0, 40),
-            'is_ai' => false,
-            'seat' => $nextSeat,
-            'token' => $tokens[$nextSeat] ?? 'gray',
-            'is_ready' => false,
-            'position' => 0,
-            'money' => (int) config('monopoly.rules.starting_money'),
-        ]);
+        $player = new GamePlayer();
+        $player->game_room_id = $room->id;
+        $player->user_id = $request->user()->id;
+        $player->name = mb_substr($request->user()->name, 0, 40);
+        $player->is_ai = false;
+        $player->seat = $nextSeat;
+        $player->token = $tokens[$nextSeat] ?? 'gray';
+        $player->is_ready = false;
+        $player->position = 0;
+        $player->money = (int) config('monopoly.rules.starting_money');
+        $player->save();
 
-        // Broadcast player joined
-        event(new GamePlayerJoined($room, $player));
+        try {
+            event(new GamePlayerJoined($room, $player));
+        } catch (\Exception $e) {
+            Log::warning('Failed to broadcast player joined: ' . $e->getMessage());
+        }
 
         return redirect()->route('lobby.show', $room->code);
     }
 
-    public function show(Request $request, GameRoom $room): View
+    public function show(Request $request, GameRoom $room)
     {
         Gate::authorize('view', $room);
 
@@ -161,8 +173,11 @@ class GameRoomController extends Controller
         $player->is_ready = !$player->is_ready;
         $player->save();
 
-        // Broadcast ready status change
-        event(new GamePlayerReady($room, $player));
+        try {
+            event(new GamePlayerReady($room, $player));
+        } catch (\Exception $e) {
+            Log::warning('Failed to broadcast ready status: ' . $e->getMessage());
+        }
 
         return response()->json([
             'success' => true,
@@ -179,17 +194,24 @@ class GameRoomController extends Controller
             abort(403, 'Hanya host yang dapat memulai permainan.');
         }
 
+        // Cegah reset game yang sudah berjalan
+        if ($room->status === 'playing') {
+            return redirect()->route('game.show', $room->code);
+        }
+
         if (!$this->canStartGame($room, $request->user())) {
             throw ValidationException::withMessages([
                 'start' => 'Minimal 2 pemain manusia harus siap untuk memulai.',
             ]);
         }
 
-        // Inisialisasi game melalui engine
         $engine->initializeMultiplayerGame($room);
 
-        // Broadcast game started
-        event(new GameStarted($room));
+        try {
+            event(new GameStarted($room));
+        } catch (\Exception $e) {
+            Log::warning('Failed to broadcast game started: ' . $e->getMessage());
+        }
 
         return redirect()->route('game.show', $room->code);
     }
@@ -206,8 +228,11 @@ class GameRoomController extends Controller
             ->where('user_id', $request->user()->id)
             ->firstOrFail();
 
-        // Broadcast sebelum hapus
-        event(new GamePlayerLeft($room, $player));
+        try {
+            event(new GamePlayerLeft($room, $player));
+        } catch (\Exception $e) {
+            Log::warning('Failed to broadcast player left: ' . $e->getMessage());
+        }
 
         if ((int) $room->host_user_id === (int) $request->user()->id) {
             $otherPlayers = $room->players()

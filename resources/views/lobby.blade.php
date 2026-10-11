@@ -17,7 +17,6 @@
         .err { color:#b00020; font-size:.85rem; margin-top:4px; }
         .note { font-size:.85rem; color:#556; margin-top:10px; }
         a { color:#0f3d2e; font-weight:600; text-decoration:none; }
-        a:hover { text-decoration:underline; }
         .logout { background:none; border:0; color:#f2c300; cursor:pointer; font-size:.9rem; padding:0; }
         .bar { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; }
         .bar span { color:#fff; }
@@ -25,7 +24,6 @@
         .nav-links a { color:#fff; padding:8px 16px; background:rgba(255,255,255,0.1); border-radius:8px; }
         .nav-links a.active { background:#f2c300; color:#222; }
         
-        /* Room list */
         .room-list { display:grid; gap:12px; }
         .room-item { background:#f8f9fa; border-radius:12px; padding:16px; display:flex; justify-content:space-between; align-items:center; }
         .room-info h3 { margin:0 0 4px; font-size:1rem; }
@@ -33,14 +31,10 @@
         .room-meta { display:flex; gap:16px; align-items:center; }
         .badge { padding:4px 10px; border-radius:20px; font-size:.8rem; font-weight:600; }
         .badge-waiting { background:#d4edda; color:#155724; }
-        .badge-playing { background:#fff3cd; color:#856404; }
         .player-count { font-size:.9rem; color:#666; }
         
-        /* Create form */
         .form-row { display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
-        @media (max-width: 600px) {
-            .form-row { grid-template-columns: 1fr; }
-        }
+        @media (max-width: 600px) { .form-row { grid-template-columns: 1fr; } }
         .checkbox-label { display:flex; align-items:center; gap:8px; margin:10px 0; cursor:pointer; }
         .checkbox-label input { width:auto; }
     </style>
@@ -58,12 +52,6 @@
         <a href="{{ route('menu') }}">← Menu Utama</a>
         <a href="{{ route('lobby.index') }}" class="active">Daftar Room</a>
     </div>
-
-    @if(session('error'))
-        <div class="card" style="background:#ffebee;">
-            <p class="err">{{ session('error') }}</p>
-        </div>
-    @endif
 
     <!-- Buat Room Baru -->
     <div class="card">
@@ -83,8 +71,10 @@
                     </select>
                 </div>
                 <div>
+                    <!-- Perbaikan Checkbox: Gunakan value="1" dan cek old() -->
                     <label class="checkbox-label">
-                        <input type="checkbox" name="is_public" value="1" checked>
+                        <input type="hidden" name="is_public" value="0">
+                        <input type="checkbox" name="is_public" value="1" {{ old('is_public', '1') == '1' ? 'checked' : '' }}>
                         <span>Room Publik (terlihat di daftar)</span>
                     </label>
                 </div>
@@ -100,7 +90,8 @@
         <form method="POST" action="{{ route('lobby.join', ['code' => '__CODE__']) }}" id="joinForm">
             @csrf
             <label for="roomCode">Kode Room (6 karakter)</label>
-            <input id="roomCode" type="text" name="_code" maxlength="6" placeholder="Contoh: ABC123" required pattern="[A-Z0-9]{6}">
+            <!-- Perbaikan: Pattern menerima huruf kecil dan besar -->
+            <input id="roomCode" type="text" name="_code" maxlength="6" placeholder="Contoh: ABC123" required pattern="[A-Za-z0-9]{6}" style="text-transform:uppercase;">
             <button class="primary" type="submit">Gabung Room</button>
         </form>
         <p class="note">Masukkan kode room yang diberikan oleh host.</p>
@@ -108,37 +99,17 @@
 
     <script>
         document.getElementById('joinForm').addEventListener('submit', function(e) {
+            // Konversi ke uppercase sebelum submit
             const code = document.getElementById('roomCode').value.toUpperCase();
             this.action = this.action.replace('__CODE__', code);
         });
     </script>
 
-    <!-- Room Saya -->
-    @if($userRooms->isNotEmpty())
-        <div class="card">
-            <h2>Room Saya</h2>
-            <div class="room-list">
-                @foreach($userRooms as $room)
-                    <div class="room-item">
-                        <div class="room-info">
-                            <h3>{{ $room->name ?? 'Room ' . $room->code }}</h3>
-                            <p>Kode: <strong>{{ $room->code }}</strong> | Dibuat {{ $room->created_at->diffForHumans() }}</p>
-                        </div>
-                        <div class="room-meta">
-                            <span class="badge badge-{{ $room->status }}">{{ ucfirst($room->status) }}</span>
-                            <a href="{{ route('lobby.show', $room->code) }}" class="secondary">Lihat</a>
-                        </div>
-                    </div>
-                @endforeach
-            </div>
-        </div>
-    @endif
-
     <!-- Daftar Room Publik -->
     <div class="card">
         <h2>Room Tersedia</h2>
         @if($rooms->isEmpty())
-            <p class="note">Belum ada room yang tersedia. Buat room baru atau tunggu teman Anda membuat room!</p>
+            <p class="note">Belum ada room yang tersedia.</p>
         @else
             <div class="room-list">
                 @foreach($rooms as $room)
@@ -158,10 +129,7 @@
                     </div>
                 @endforeach
             </div>
-            
-            <div style="margin-top:16px;">
-                {{ $rooms->links() }}
-            </div>
+            <div style="margin-top:16px;">{{ $rooms->links() }}</div>
         @endif
     </div>
 </div>

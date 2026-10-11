@@ -9,6 +9,7 @@ use App\Models\GamePlayer;
 use App\Models\GameRoom;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class GameMasterService
 {
@@ -24,9 +25,6 @@ class GameMasterService
     ) {
     }
 
-    /**
-     * Mengatur uang pemain (Tambah/Kurang/Set)
-     */
     public function adjustMoney(User $owner, GameRoom $room, int $playerId, string $action, int $amount, ?string $note = null): void
     {
         $player = GamePlayer::where('game_room_id', $room->id)->findOrFail($playerId);
@@ -48,18 +46,16 @@ class GameMasterService
             'action' => $action,
             'amount' => $amount,
             'before' => $before,
-            'after' => $player->money,
+            'after' => $player->fresh()->money,
             'note' => $note,
         ]);
+
+        $this->safeBroadcast($room);
     }
 
-    /**
-     * Mengatur hasil dadu berikutnya
-     */
     public function setDiceOverride(User $owner, GameRoom $room, ?int $targetPlayerId, int $die1, int $die2, int $uses = 1): void
     {
         $gmState = $this->getOrCreateGmState($room);
-        
         $target = $targetPlayerId ? GamePlayer::find($targetPlayerId) : null;
         
         $gmState->dice_override = [
@@ -76,37 +72,29 @@ class GameMasterService
             'uses' => $uses,
             'target_name' => $target?->name,
         ]);
+
+        $this->safeBroadcast($room);
     }
 
-    /**
-     * Memindahkan posisi bidak
-     */
-    public function movePlayer(User $owner, GameRoom $room, int $playerId, int $tileId, bool $triggerEffect = true): void
+    public function movePlayer(User $owner, GameRoom $room, int $playerId, int $tileId, bool $triggerEffect = false): void
     {
         $player = GamePlayer::where('game_room_id', $room->id)->findOrFail($playerId);
         $oldPos = $player->position;
         
         $this->movement->jumpTo($player, $tileId);
         
-        if ($triggerEffect) {
-            // Logika sederhana: jika trigger effect, kita asumsikan ini seperti mendarat normal
-            // Namun karena ini GM, kita mungkin tidak ingin menjalankan seluruh resolveLanding yang kompleks
-            // Untuk keamanan, kita hanya update posisi. Efek bisa ditambahkan manual jika perlu.
-            $this->state->log($room, 'gm_move', "GM memindahkan {$player->name} ke petak {$tileId}.");
-        } else {
-            $this->state->log($room, 'gm_move', "GM memindahkan {$player->name} ke petak {$tileId} tanpa efek.", ['secret' => true]);
-        }
+        $tile = $this->board->tile($tileId);
+        $this->state->log($room, 'gm_move', "GM memindahkan {$player->name} ke {$tile['name']}.");
 
         $this->logAudit($owner, $room, 'move_player', $player, [
             'from' => $oldPos,
             'to' => $tileId,
             'trigger_effect' => $triggerEffect,
         ]);
+
+        $this->safeBroadcast($room);
     }
 
-    /**
-     * Memberikan properti
-     */
     public function giveProperty(User $owner, GameRoom $room, int $playerId, int $tileId): void
     {
         $player = GamePlayer::where('game_room_id', $room->id)->findOrFail($playerId);
@@ -116,7 +104,7 @@ class GameMasterService
             
         $oldOwner = $ownership->owner_player_id;
         $ownership->owner_player_id = $player->id;
-        $ownership->is_mortgaged = false; // Reset mortgage saat dipaksa pindah oleh GM
+        $ownership->is_mortgaged = false;
         $ownership->save();
 
         $tile = $this->board->tile($tileId);
@@ -127,11 +115,10 @@ class GameMasterService
             'tile_name' => $tile['name'],
             'previous_owner' => $oldOwner,
         ]);
+
+        $this->safeBroadcast($room);
     }
 
-    /**
-     * Membangun/Menghapus bangunan secara paksa
-     */
     public function forceBuilding(User $owner, GameRoom $room, int $playerId, int $tileId, string $type): void
     {
         $player = GamePlayer::where('game_room_id', $room->id)->findOrFail($playerId);
@@ -158,17 +145,19 @@ class GameMasterService
             'tile_id' => $tileId,
             'type' => $type,
         ]);
+
+        $this->safeBroadcast($room);
     }
 
-    /**
-     * Mengubah giliran
-     */
     public function changeTurn(User $owner, GameRoom $room, int $nextPlayerId): void
     {
         $nextPlayer = GamePlayer::find($nextPlayerId);
         $currentPlayer = GamePlayer::find($room->current_player_id);
         
-        $this->turns->begin($room, $nextPlayer);
+        DB::transaction(function () use ($room, $nextPlayer) {
+            $this->turns->begin($room, $nextPlayer);
+            $room->save();
+        });
         
         $this->state->log($room, 'gm_turn', "GM mengganti giliran dari {$currentPlayer->name} ke {$nextPlayer->name}.");
 
@@ -176,11 +165,10 @@ class GameMasterService
             'from_player_id' => $currentPlayer->id,
             'to_player_id' => $nextPlayerId,
         ]);
+
+        $this->safeBroadcast($room);
     }
 
-    /**
-     * Toggle Chaos Mode
-     */
     public function toggleChaosMode(User $owner, GameRoom $room, bool $enabled): void
     {
         $gmState = $this->getOrCreateGmState($room);
@@ -190,6 +178,20 @@ class GameMasterService
         $this->state->log($room, 'gm_event', "GM " . ($enabled ? 'mengaktifkan' : 'menonaktifkan') . " Chaos Mode.");
         
         $this->logAudit($owner, $room, 'toggle_chaos', null, ['enabled' => $enabled]);
+
+        $this->safeBroadcast($room);
+    }
+
+    public function enableGmMode(User $owner, GameRoom $room): void
+    {
+        $room->gm_enabled = true;
+        $room->save();
+        
+        $this->state->log($room, 'system', "Game Master Mode diaktifkan oleh {$owner->name}.");
+        
+        $this->logAudit($owner, $room, 'enable_gm_mode', null, []);
+        
+        $this->safeBroadcast($room);
     }
 
     private function getOrCreateGmState(GameRoom $room): GameMasterState
@@ -207,10 +209,19 @@ class GameMasterService
             'user_id' => $owner->id,
             'action' => $action,
             'target_player_id' => $target?->id,
-            'is_secret' => true, // Default secret untuk audit log
+            'is_secret' => true,
             'before' => null,
             'after' => $data,
             'note' => $data['note'] ?? null,
         ]);
+    }
+
+    private function safeBroadcast(GameRoom $room): void
+    {
+        try {
+            $this->state->broadcastState($room);
+        } catch (\Exception $e) {
+            Log::warning('GM broadcast failed: ' . $e->getMessage());
+        }
     }
 }

@@ -33,16 +33,3 @@ Broadcast::channel('game.{code}', function ($user, $code) {
 
     return false;
 });
-
-/**
- * Private channel untuk update state game real-time
- */
-Broadcast::channel('game.{code}', function ($user, $code) {
-    $room = GameRoom::where('code', $code)->first();
-
-    if (!$room) {
-        return false;
-    }
-
-    return $room->hasMember($user);
-});
