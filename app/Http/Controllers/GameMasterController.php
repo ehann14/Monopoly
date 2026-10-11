@@ -19,22 +19,18 @@ class GameMasterController extends Controller
 
     private function ensureOwner(User $user): void
     {
-        // Cek apakah user memiliki role owner melalui relasi atau field khusus
-        if (!$user->hasRole('owner') && !$user->is_admin) {
-            // Fallback: cek email atau ID khusus jika tidak ada role system
-            $ownerEmails = config('monopoly.owner_emails', ['admin123@gmail.com']);
-            if (!in_array($user->email, $ownerEmails)) {
-                abort(403, 'Akses ditolak. Hanya Owner yang dapat menggunakan panel Game Master.');
-            }
+        // Menggunakan konfigurasi email yang aman daripada hardcode
+        $ownerEmails = config('monopoly.owner_emails', ['admin123@gmail.com']);
+        
+        if (!in_array($user->email, $ownerEmails)) {
+            abort(403, 'Akses ditolak. Hanya Owner yang dapat menggunakan panel Game Master.');
         }
     }
 
     public function enableGmMode(Request $request, GameRoom $room): JsonResponse
     {
         $this->ensureOwner($request->user());
-        
         $this->gmService->enableGmMode($request->user(), $room);
-
         return response()->json(['message' => 'Game Master Mode diaktifkan.']);
     }
 
@@ -54,15 +50,7 @@ class GameMasterController extends Controller
             throw ValidationException::withMessages(['player_id' => 'Pemain tidak berada di room ini.']);
         }
 
-        $this->gmService->adjustMoney(
-            $request->user(), 
-            $room, 
-            $validated['player_id'], 
-            $validated['action'], 
-            $validated['amount'], 
-            $validated['note'] ?? null
-        );
-
+        $this->gmService->adjustMoney($request->user(), $room, $validated['player_id'], $validated['action'], $validated['amount'], $validated['note'] ?? null);
         return response()->json(['message' => 'Saldo berhasil disesuaikan.']);
     }
 
@@ -77,15 +65,7 @@ class GameMasterController extends Controller
             'uses' => ['required', 'integer', 'min:1', 'max:10'],
         ]);
 
-        $this->gmService->setDiceOverride(
-            $request->user(), 
-            $room, 
-            $validated['target_player_id'] ?? null, 
-            $validated['die1'], 
-            $validated['die2'], 
-            $validated['uses']
-        );
-
+        $this->gmService->setDiceOverride($request->user(), $room, $validated['target_player_id'] ?? null, $validated['die1'], $validated['die2'], $validated['uses']);
         return response()->json(['message' => 'Dadu telah diatur.']);
     }
 
@@ -104,14 +84,7 @@ class GameMasterController extends Controller
             throw ValidationException::withMessages(['player_id' => 'Pemain tidak berada di room ini.']);
         }
 
-        $this->gmService->movePlayer(
-            $request->user(), 
-            $room, 
-            $validated['player_id'], 
-            $validated['tile_id'], 
-            $validated['trigger_effect'] ?? false
-        );
-
+        $this->gmService->movePlayer($request->user(), $room, $validated['player_id'], $validated['tile_id'], $validated['trigger_effect'] ?? false);
         return response()->json(['message' => 'Posisi pemain diubah.']);
     }
 
@@ -125,7 +98,6 @@ class GameMasterController extends Controller
         ]);
 
         $this->gmService->giveProperty($request->user(), $room, $validated['player_id'], $validated['tile_id']);
-
         return response()->json(['message' => 'Properti diberikan.']);
     }
 
@@ -139,14 +111,7 @@ class GameMasterController extends Controller
             'type' => ['required', 'string', 'in:add_house,remove_house,add_hotel,remove_hotel'],
         ]);
 
-        $this->gmService->forceBuilding(
-            $request->user(), 
-            $room, 
-            $validated['player_id'], 
-            $validated['tile_id'], 
-            $validated['type']
-        );
-
+        $this->gmService->forceBuilding($request->user(), $room, $validated['player_id'], $validated['tile_id'], $validated['type']);
         return response()->json(['message' => 'Bangunan diubah.']);
     }
 
@@ -159,19 +124,14 @@ class GameMasterController extends Controller
         ]);
 
         $this->gmService->changeTurn($request->user(), $room, $validated['next_player_id']);
-
         return response()->json(['message' => 'Giliran diganti.']);
     }
 
     public function toggleChaos(Request $request, GameRoom $room): JsonResponse
     {
         $this->ensureOwner($request->user());
-        
-        // Handle boolean properly from JSON
         $enabled = filter_var($request->input('enabled'), FILTER_VALIDATE_BOOLEAN);
-        
         $this->gmService->toggleChaosMode($request->user(), $room, $enabled);
-
         return response()->json(['message' => 'Chaos mode ' . ($enabled ? 'diaktifkan' : 'dinonaktifkan') . '.']);
     }
 }

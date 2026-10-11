@@ -4,35 +4,29 @@ namespace Tests\Support;
 
 use App\Models\GamePlayer;
 use App\Models\GameRoom;
+use App\Services\DiceService;
 
-class FakeDice
+class FakeDice extends DiceService
 {
-    private array $sequence = [];
-    private int $index = 0;
-
-    public function setSequence(array $sequence): void
-    {
-        $this->sequence = $sequence;
-        $this->index = 0;
-    }
+    public array $queue = [];
 
     public function roll(?GameRoom $room = null, ?GamePlayer $player = null): array
     {
-        if (empty($this->sequence)) {
-            // Default random jika tidak ada sequence
+        if (!empty($this->queue)) {
+            $next = array_shift($this->queue);
+            
+            // Support format [d1, d2] atau integer (double)
+            if (is_array($next)) {
+                $d1 = $next[0];
+                $d2 = $next[1];
+            } else {
+                $d1 = $next;
+                $d2 = $next;
+            }
+        } else {
+            // Fallback random jika queue habis
             $d1 = random_int(1, 6);
             $d2 = random_int(1, 6);
-        } else {
-            $value = $this->sequence[$this->index % count($this->sequence)];
-            $this->index++;
-            
-            if (is_array($value)) {
-                $d1 = $value[0];
-                $d2 = $value[1];
-            } else {
-                $d1 = $value;
-                $d2 = $value;
-            }
         }
 
         return [
@@ -40,7 +34,7 @@ class FakeDice
             'd2' => $d2,
             'total' => $d1 + $d2,
             'double' => $d1 === $d2,
-            'overridden' => !empty($this->sequence),
+            'overridden' => true,
         ];
     }
 }
