@@ -26,12 +26,10 @@ class GameStateService
         $currentPlayer = $players->firstWhere('id', $room->current_player_id);
         $currentUserPlayer = $players->firstWhere('user_id', $user->id);
 
+        // Tentukan aksi yang tersedia untuk pemain saat ini
         $actions = [];
         $canAct = false;
         
-        // FIX: Inisialisasi can_buy dengan false secara default
-        $canBuy = false;
-
         if ($currentPlayer && !$currentPlayer->is_ai) {
             $isMyTurn = $currentUserPlayer && $currentUserPlayer->id === $currentPlayer->id;
             $isLocalHost = $room->mode === 'local' && $room->host_user_id === $user->id;
@@ -43,16 +41,13 @@ class GameStateService
                     $actions[] = 'roll';
                     if ($currentPlayer->in_jail) {
                         $actions[] = 'pay_jail';
-                        if ($currentPlayer->jail_cards > 0) $actions[] = 'use_jail_card';
+                        if ($currentPlayer->jail_cards > 0) {
+                            $actions[] = 'use_jail_card';
+                        }
                     }
                 } elseif ($room->turn_phase === 'await_buy') {
-                    // FIX: Hanya set can_buy true jika fase benar DAN uang cukup
-                    $price = (int) ($room->pending['price'] ?? 0);
-                    if ($currentPlayer->money >= $price) {
-                        $canBuy = true;
-                        $actions[] = 'buy';
-                    }
-                    $actions[] = 'decline'; // Decline selalu tersedia
+                    $actions[] = 'buy';
+                    $actions[] = 'decline';
                 } elseif ($room->turn_phase === 'await_end') {
                     $actions[] = 'end_turn';
                     $actions[] = 'build';
@@ -68,7 +63,15 @@ class GameStateService
             }
         }
 
+        // Cek apakah AI harus jalan
         $aiTurn = $currentPlayer && $currentPlayer->is_ai && !$currentPlayer->is_bankrupt && $room->status === 'playing';
+
+        // Apakah pemain yang sedang giliran mampu membeli properti yang ditawarkan
+        $canBuy = $canAct
+            && $room->turn_phase === 'await_buy'
+            && isset($room->pending['price'])
+            && $currentPlayer !== null
+            && $currentPlayer->money >= (int) $room->pending['price'];
 
         return [
             'room' => [
@@ -84,18 +87,9 @@ class GameStateService
                 'winner_player_id' => $room->winner_player_id,
                 'gm_enabled' => $room->gm_enabled,
             ],
-            // FIX: Menggunakan variabel $canBuy yang sudah divalidasi saldonya
-            'phase' => $room->turn_phase,
-            'pending' => $room->pending,
-            'can_buy' => $canBuy, 
-            'actions' => $actions,
-            'can_act' => $canAct,
-            'manage' => $currentUserPlayer && ($room->host_user_id === $user->id || $room->mode === 'local'),
-            'ai_turn' => $aiTurn,
-            
             'players' => $players->map(fn (GamePlayer $p) => [
                 'id' => $p->id,
-                'name' => e($p->name),
+                'name' => $p->name, // UI memakai textContent, jadi tidak boleh di-escape ganda
                 'token' => $p->token,
                 'money' => $p->money,
                 'position' => $p->position,
@@ -116,9 +110,16 @@ class GameStateService
             ])->toArray(),
             'logs' => $logs->map(fn (GameLog $l) => [
                 'type' => $l->type,
-                'message' => e($l->message),
+                'message' => e($l->message), // Escape untuk mencegah XSS
             ])->toArray(),
             'version' => $room->state_version,
+            'phase' => $room->turn_phase,
+            'actions' => $actions,
+            'can_act' => $canAct,
+            'manage' => $currentUserPlayer && ($room->host_user_id === $user->id || $room->mode === 'local'),
+            'ai_turn' => $aiTurn,
+            'pending' => $room->pending,
+            'can_buy' => $canBuy,
         ];
     }
 
@@ -136,10 +137,15 @@ class GameStateService
     public function broadcastState(GameRoom $room): void
     {
         try {
+            // Ambil host sebagai referensi untuk membuat snapshot publik
             $host = $room->load('host')->host;
-            if (!$host) return;
+            if (!$host) {
+                return;
+            }
 
             $snapshot = $this->snapshot($room, $host);
+            
+            // Broadcast hanya versi dan event, bukan data sensitif
             event(new GameStateChanged($room, $snapshot));
         } catch (\Exception $e) {
             Log::warning('Broadcast failed: ' . $e->getMessage());

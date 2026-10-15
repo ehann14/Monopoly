@@ -41,6 +41,7 @@ class GameController extends Controller
         ]);
 
         $room = $engine->createLocalGame($request->user(), $data['players']);
+
         return redirect()->route('game.show', $room->code);
     }
 
@@ -58,7 +59,10 @@ class GameController extends Controller
             'ai_names.*' => ['required', 'string', 'min:1', 'max:20', 'distinct:ignore_case'],
         ], [
             'difficulty.required' => 'Pilih tingkat kesulitan.',
+            'difficulty.in' => 'Tingkat kesulitan tidak valid.',
             'ai_names.required' => 'Isi minimal satu nama komputer.',
+            'ai_names.min' => 'Isi minimal satu nama komputer.',
+            'ai_names.max' => 'Maksimal 3 lawan komputer.',
             'ai_names.*.distinct' => 'Nama komputer tidak boleh sama.',
         ]);
 
@@ -72,6 +76,7 @@ class GameController extends Controller
         }
 
         $room = $engine->createAiGame($request->user(), $data['ai_names'], $data['difficulty']);
+
         return redirect()->route('game.show', $room->code);
     }
 
@@ -79,13 +84,9 @@ class GameController extends Controller
     {
         Gate::authorize('view', $room);
 
-        // FIX: Kirim variabel canGm ke view
-        $ownerEmails = config('monopoly.owner_emails', ['admin123@gmail.com']);
-        $canGm = in_array($request->user()->email, $ownerEmails);
-
         return view('game', [
             'room' => $room,
-            'canGm' => $canGm, // Variabel ini sekarang tersedia di Blade
+            'canGm' => $request->user()->isOwner() && $room->hasMember($request->user()),
             'clientData' => [
                 'tiles' => config('monopoly.board'),
                 'groups' => config('monopoly.groups'),
@@ -105,6 +106,7 @@ class GameController extends Controller
     public function state(Request $request, GameRoom $room, GameStateService $state): JsonResponse
     {
         Gate::authorize('view', $room);
+
         return response()->json($state->snapshot($room, $request->user()));
     }
 
@@ -126,10 +128,10 @@ class GameController extends Controller
             return response()->json(['message' => $e->getMessage()], 422);
         }
 
-        // FIX: Refresh room untuk mengambil data terbaru dari DB setelah transaksi
+        // Engine bekerja pada salinan room yang dikunci; muat ulang agar snapshot tidak basi.
         $room->refresh();
-        
-        // Broadcast state terbaru
+
+        // Broadcast state setelah aksi berhasil
         $state->broadcastState($room);
 
         return response()->json($state->snapshot($room, $request->user()));
@@ -148,10 +150,10 @@ class GameController extends Controller
             return response()->json(['message' => $e->getMessage()], 422);
         }
 
-        // FIX: Refresh room untuk mengambil data terbaru dari DB setelah AI bergerak
+        // Engine bekerja pada salinan room yang dikunci; muat ulang agar snapshot tidak basi.
         $room->refresh();
 
-        // Broadcast state terbaru
+        // Broadcast state setelah AI bergerak
         $state->broadcastState($room);
 
         return response()->json($state->snapshot($room, $request->user()));
